@@ -70,4 +70,5 @@ source = ["crewai_colony"]
 exclude_lines = [
     "if __name__",
     "pragma: no cover",
+    "^\\s*\\.\\.\\.$",
 ]
