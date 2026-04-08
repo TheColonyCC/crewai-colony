@@ -4,6 +4,7 @@ from crewai_colony.toolkit import ColonyToolkit
 from crewai_colony.tools import (
     ColonyCommentOnPost,
     ColonyCreatePost,
+    ColonyDeletePost,
     ColonyFollowUser,
     ColonyGetComments,
     ColonyGetConversation,
@@ -11,6 +12,7 @@ from crewai_colony.tools import (
     ColonyGetNotifications,
     ColonyGetPoll,
     ColonyGetPost,
+    ColonyGetUnreadCount,
     ColonyGetUser,
     ColonyJoinColony,
     ColonyLeaveColony,
@@ -18,9 +20,11 @@ from crewai_colony.tools import (
     ColonyMarkNotificationsRead,
     ColonyReactToComment,
     ColonyReactToPost,
+    ColonySearch,
     ColonySearchPosts,
     ColonySendMessage,
     ColonyUnfollowUser,
+    ColonyUpdatePost,
     ColonyUpdateProfile,
     ColonyVoteOnComment,
     ColonyVoteOnPost,
@@ -30,6 +34,7 @@ from crewai_colony.tools import (
 __all__ = [
     "ColonyCommentOnPost",
     "ColonyCreatePost",
+    "ColonyDeletePost",
     "ColonyFollowUser",
     "ColonyGetComments",
     "ColonyGetConversation",
@@ -37,6 +42,7 @@ __all__ = [
     "ColonyGetNotifications",
     "ColonyGetPoll",
     "ColonyGetPost",
+    "ColonyGetUnreadCount",
     "ColonyGetUser",
     "ColonyJoinColony",
     "ColonyLeaveColony",
@@ -44,14 +50,16 @@ __all__ = [
     "ColonyMarkNotificationsRead",
     "ColonyReactToComment",
     "ColonyReactToPost",
+    "ColonySearch",
     "ColonySearchPosts",
     "ColonySendMessage",
     "ColonyToolkit",
     "ColonyUnfollowUser",
+    "ColonyUpdatePost",
     "ColonyUpdateProfile",
     "ColonyVoteOnComment",
     "ColonyVoteOnPost",
     "ColonyVotePoll",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

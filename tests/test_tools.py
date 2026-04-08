@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from crewai_colony import (
     ColonyCommentOnPost,
     ColonyCreatePost,
+    ColonyDeletePost,
     ColonyFollowUser,
     ColonyGetComments,
     ColonyGetConversation,
@@ -20,6 +22,7 @@ from crewai_colony import (
     ColonyGetNotifications,
     ColonyGetPoll,
     ColonyGetPost,
+    ColonyGetUnreadCount,
     ColonyGetUser,
     ColonyJoinColony,
     ColonyLeaveColony,
@@ -27,15 +30,18 @@ from crewai_colony import (
     ColonyMarkNotificationsRead,
     ColonyReactToComment,
     ColonyReactToPost,
+    ColonySearch,
     ColonySearchPosts,
     ColonySendMessage,
     ColonyToolkit,
     ColonyUnfollowUser,
+    ColonyUpdatePost,
     ColonyUpdateProfile,
     ColonyVoteOnComment,
     ColonyVoteOnPost,
     ColonyVotePoll,
 )
+from crewai_colony.tools import _is_retryable, _safe_run
 
 
 @pytest.fixture
@@ -81,6 +87,40 @@ class TestSearchPosts:
         mock_client.get_posts.assert_called_once_with(colony="findings", sort="new", limit=5, search="ai")
 
 
+class TestSearch:
+    def test_calls_search(self, mock_client: MagicMock) -> None:
+        mock_client.search.return_value = {
+            "results": [
+                {
+                    "id": "p1",
+                    "title": "AI Agents",
+                    "author": {"username": "scout"},
+                    "score": 10,
+                    "comment_count": 3,
+                    "colony": "general",
+                    "body": "Great post about AI",
+                }
+            ]
+        }
+        tool = ColonySearch(client=mock_client)
+        result = tool._run(query="AI agents")
+        mock_client.search.assert_called_once_with("AI agents", limit=20)
+        assert "AI Agents" in result
+        assert "@scout" in result
+
+    def test_no_results(self, mock_client: MagicMock) -> None:
+        mock_client.search.return_value = {"results": []}
+        tool = ColonySearch(client=mock_client)
+        result = tool._run(query="nonexistent")
+        assert "No results found" in result
+
+    def test_custom_limit(self, mock_client: MagicMock) -> None:
+        mock_client.search.return_value = {"results": []}
+        tool = ColonySearch(client=mock_client)
+        tool._run(query="test", limit=5)
+        mock_client.search.assert_called_once_with("test", limit=5)
+
+
 class TestGetPost:
     def test_calls_get_post(self, mock_client: MagicMock) -> None:
         mock_client.get_post.return_value = {
@@ -91,7 +131,13 @@ class TestGetPost:
             "comment_count": 1,
             "colony": {"name": "general"},
             "body": "Post body here",
-            "comments": [{"author": {"username": "commenter"}, "body": "Nice!", "score": 1}],
+            "comments": [
+                {
+                    "author": {"username": "commenter"},
+                    "body": "Nice!",
+                    "score": 1,
+                }
+            ],
         }
         tool = ColonyGetPost(client=mock_client)
         result = tool._run(post_id="abc")
@@ -104,7 +150,14 @@ class TestGetPost:
 class TestGetComments:
     def test_calls_get_comments(self, mock_client: MagicMock) -> None:
         mock_client.get_comments.return_value = {
-            "comments": [{"id": "c1", "author": {"username": "bot"}, "body": "Great post!", "score": 2}]
+            "comments": [
+                {
+                    "id": "c1",
+                    "author": {"username": "bot"},
+                    "body": "Great post!",
+                    "score": 2,
+                }
+            ]
         }
         tool = ColonyGetComments(client=mock_client)
         result = tool._run(post_id="p1")
@@ -122,7 +175,11 @@ class TestGetComments:
 
 class TestGetMe:
     def test_calls_get_me(self, mock_client: MagicMock) -> None:
-        mock_client.get_me.return_value = {"username": "test-agent", "karma": 42, "bio": "I am a bot"}
+        mock_client.get_me.return_value = {
+            "username": "test-agent",
+            "karma": 42,
+            "bio": "I am a bot",
+        }
         tool = ColonyGetMe(client=mock_client)
         result = tool._run()
         mock_client.get_me.assert_called_once()
@@ -132,7 +189,10 @@ class TestGetMe:
 
 class TestGetUser:
     def test_calls_get_user(self, mock_client: MagicMock) -> None:
-        mock_client.get_user.return_value = {"username": "other-agent", "karma": 10}
+        mock_client.get_user.return_value = {
+            "username": "other-agent",
+            "karma": 10,
+        }
         tool = ColonyGetUser(client=mock_client)
         result = tool._run(user_id="uid-123")
         mock_client.get_user.assert_called_once_with("uid-123")
@@ -142,7 +202,13 @@ class TestGetUser:
 class TestListColonies:
     def test_calls_get_colonies(self, mock_client: MagicMock) -> None:
         mock_client.get_colonies.return_value = {
-            "colonies": [{"name": "general", "description": "Open discussion", "member_count": 100}]
+            "colonies": [
+                {
+                    "name": "general",
+                    "description": "Open discussion",
+                    "member_count": 100,
+                }
+            ]
         }
         tool = ColonyListColonies(client=mock_client)
         result = tool._run()
@@ -166,7 +232,13 @@ class TestGetConversation:
 class TestGetNotifications:
     def test_calls_get_notifications(self, mock_client: MagicMock) -> None:
         mock_client.get_notifications.return_value = {
-            "notifications": [{"type": "mention", "preview": "Someone mentioned you", "read": False}]
+            "notifications": [
+                {
+                    "type": "mention",
+                    "preview": "Someone mentioned you",
+                    "read": False,
+                }
+            ]
         }
         tool = ColonyGetNotifications(client=mock_client)
         result = tool._run()
@@ -199,6 +271,21 @@ class TestGetPoll:
         assert "10 votes" in result
 
 
+class TestGetUnreadCount:
+    def test_calls_get_unread_count(self, mock_client: MagicMock) -> None:
+        mock_client.get_unread_count.return_value = {"count": 7}
+        tool = ColonyGetUnreadCount(client=mock_client)
+        result = tool._run()
+        mock_client.get_unread_count.assert_called_once()
+        assert "Unread DMs: 7" in result
+
+    def test_zero_unread(self, mock_client: MagicMock) -> None:
+        mock_client.get_unread_count.return_value = {"count": 0}
+        tool = ColonyGetUnreadCount(client=mock_client)
+        result = tool._run()
+        assert "Unread DMs: 0" in result
+
+
 # ── Write tools ────────────────────────────────────────────────────
 
 
@@ -208,7 +295,10 @@ class TestCreatePost:
         tool = ColonyCreatePost(client=mock_client)
         result = tool._run(title="Hello", body="World")
         mock_client.create_post.assert_called_once_with(
-            title="Hello", body="World", colony="general", post_type="discussion"
+            title="Hello",
+            body="World",
+            colony="general",
+            post_type="discussion",
         )
         assert "new-post" in result
 
@@ -217,6 +307,36 @@ class TestCreatePost:
         tool = ColonyCreatePost(client=mock_client)
         tool._run(title="T", body="B", colony="findings", post_type="analysis")
         mock_client.create_post.assert_called_once_with(title="T", body="B", colony="findings", post_type="analysis")
+
+
+class TestUpdatePost:
+    def test_calls_update_post(self, mock_client: MagicMock) -> None:
+        mock_client.update_post.return_value = {"id": "p1"}
+        tool = ColonyUpdatePost(client=mock_client)
+        result = tool._run(post_id="p1", title="New Title")
+        mock_client.update_post.assert_called_once_with("p1", title="New Title")
+        assert "OK" in result
+
+    def test_update_body(self, mock_client: MagicMock) -> None:
+        mock_client.update_post.return_value = {"id": "p1"}
+        tool = ColonyUpdatePost(client=mock_client)
+        tool._run(post_id="p1", body="Updated body")
+        mock_client.update_post.assert_called_once_with("p1", body="Updated body")
+
+    def test_no_fields_returns_error(self, mock_client: MagicMock) -> None:
+        tool = ColonyUpdatePost(client=mock_client)
+        result = tool._run(post_id="p1")
+        assert "Error" in result
+        mock_client.update_post.assert_not_called()
+
+
+class TestDeletePost:
+    def test_calls_delete_post(self, mock_client: MagicMock) -> None:
+        mock_client.delete_post.return_value = {"status": "deleted"}
+        tool = ColonyDeletePost(client=mock_client)
+        result = tool._run(post_id="p1")
+        mock_client.delete_post.assert_called_once_with("p1")
+        assert "OK" in result
 
 
 class TestCommentOnPost:
@@ -354,7 +474,7 @@ class TestLeaveColony:
         assert "OK" in result
 
 
-# ── Error handling ─────────────────────────────────────────────────
+# ── Error handling & retry ─────────────────────────────────────────
 
 
 class TestErrorHandling:
@@ -366,6 +486,80 @@ class TestErrorHandling:
         assert "401" in result
 
 
+class TestRetry:
+    def test_is_retryable_429(self) -> None:
+        exc = Exception("rate limited")
+        exc.status = 429  # type: ignore[attr-defined]
+        assert _is_retryable(exc) is True
+
+    def test_is_retryable_500(self) -> None:
+        exc = Exception("server error")
+        exc.status = 500  # type: ignore[attr-defined]
+        assert _is_retryable(exc) is True
+
+    def test_not_retryable_404(self) -> None:
+        exc = Exception("not found")
+        exc.status = 404  # type: ignore[attr-defined]
+        assert _is_retryable(exc) is False
+
+    def test_not_retryable_plain_exception(self) -> None:
+        assert _is_retryable(Exception("bad")) is False
+
+    def test_retryable_timeout(self) -> None:
+        assert _is_retryable(TimeoutError()) is True
+
+    def test_retryable_connection_error(self) -> None:
+        assert _is_retryable(ConnectionError()) is True
+
+    @patch("crewai_colony.tools.time.sleep")
+    def test_retries_on_429(self, mock_sleep: MagicMock) -> None:
+        exc = Exception("rate limited")
+        exc.status = 429  # type: ignore[attr-defined]
+        call_count = 0
+
+        def flaky(*args: Any, **kwargs: Any) -> dict[str, str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise exc
+            return {"status": "ok"}
+
+        from crewai_colony.tools import _fmt_simple
+
+        result = _safe_run(flaky, _fmt_simple)
+        assert "OK" in result
+        assert call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("crewai_colony.tools.time.sleep")
+    def test_no_retry_on_400(self, mock_sleep: MagicMock) -> None:
+        exc = Exception("bad request")
+        exc.status = 400  # type: ignore[attr-defined]
+
+        def always_fail(*args: Any, **kwargs: Any) -> None:
+            raise exc
+
+        from crewai_colony.tools import _fmt_simple
+
+        result = _safe_run(always_fail, _fmt_simple)
+        assert "Error" in result
+        mock_sleep.assert_not_called()
+
+    @patch("crewai_colony.tools.time.sleep")
+    def test_gives_up_after_max_retries(self, mock_sleep: MagicMock) -> None:
+        exc = Exception("server error")
+        exc.status = 500  # type: ignore[attr-defined]
+
+        def always_fail(*args: Any, **kwargs: Any) -> None:
+            raise exc
+
+        from crewai_colony.tools import _fmt_simple
+
+        result = _safe_run(always_fail, _fmt_simple)
+        assert "Error" in result
+        assert mock_sleep.call_count == 2  # retried twice before giving up
+
+
 # ── Toolkit ────────────────────────────────────────────────────────
 
 
@@ -375,23 +569,25 @@ class TestToolkit:
         toolkit.client = MagicMock()
         toolkit.read_only = False
         tools = toolkit.get_tools()
-        assert len(tools) == 23
+        assert len(tools) == 27
         names = {t.name for t in tools}
         assert "colony_create_post" in names
         assert "colony_search_posts" in names
-        assert "colony_react_to_post" in names
-        assert "colony_join_colony" in names
+        assert "colony_search" in names
+        assert "colony_update_post" in names
+        assert "colony_delete_post" in names
+        assert "colony_get_unread_count" in names
 
     def test_read_only(self) -> None:
         toolkit = ColonyToolkit.__new__(ColonyToolkit)
         toolkit.client = MagicMock()
         toolkit.read_only = True
         tools = toolkit.get_tools()
-        assert len(tools) == 9
+        assert len(tools) == 11
         names = {t.name for t in tools}
         assert "colony_search_posts" in names
-        assert "colony_get_notifications" in names
-        assert "colony_get_poll" in names
+        assert "colony_search" in names
+        assert "colony_get_unread_count" in names
         assert "colony_create_post" not in names
 
     def test_include_filter(self) -> None:
@@ -406,7 +602,7 @@ class TestToolkit:
         toolkit.client = MagicMock()
         toolkit.read_only = False
         tools = toolkit.get_tools(exclude=["colony_create_post"])
-        assert len(tools) == 22
+        assert len(tools) == 26
         names = {t.name for t in tools}
         assert "colony_create_post" not in names
 
@@ -416,7 +612,6 @@ class TestToolkit:
 
 class TestFormatting:
     def test_posts_formatted_not_json(self, mock_client: MagicMock) -> None:
-        """Verify output is human-readable text, not raw JSON."""
         mock_client.get_posts.return_value = {
             "posts": [
                 {
@@ -432,7 +627,6 @@ class TestFormatting:
         }
         tool = ColonySearchPosts(client=mock_client)
         result = tool._run(query="ai")
-        # Should contain formatted text, not JSON braces
         assert "AI Agents Unite" in result
         assert "@scout" in result
         assert "score: 42" in result
@@ -450,3 +644,29 @@ class TestFormatting:
         result = tool._run(user_id="u1")
         assert result.startswith("OK")
         assert "followed" in result
+
+    def test_search_results_formatted(self, mock_client: MagicMock) -> None:
+        mock_client.search.return_value = {
+            "results": [
+                {
+                    "id": "p5",
+                    "title": "Found It",
+                    "author": {"username": "finder"},
+                    "score": 8,
+                    "comment_count": 1,
+                    "colony": "findings",
+                    "body": "Here it is",
+                }
+            ]
+        }
+        tool = ColonySearch(client=mock_client)
+        result = tool._run(query="test")
+        assert "Found It" in result
+        assert "@finder" in result
+        assert "{" not in result
+
+    def test_unread_count_formatted(self, mock_client: MagicMock) -> None:
+        mock_client.get_unread_count.return_value = {"count": 3}
+        tool = ColonyGetUnreadCount(client=mock_client)
+        result = tool._run()
+        assert "Unread DMs: 3" in result
