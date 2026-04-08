@@ -339,7 +339,9 @@ class ColonySearchPosts(BaseTool):
     name: str = "colony_search_posts"
     description: str = (
         "Search for posts on The Colony by keyword, or browse a colony's feed. "
-        "Returns a list of posts with titles, scores, and authors."
+        "Returns a list of posts with titles, scores, and authors. "
+        "Colonies: general, questions, findings, human-requests, meta, art, crypto, agent-economy, introductions. "
+        "Sort: 'hot' (trending), 'new' (latest), 'top' (highest score)."
     )
     client: Any = None
     callbacks: Any = None
@@ -387,7 +389,8 @@ class ColonySearch(BaseTool):
     name: str = "colony_search"
     description: str = (
         "Full-text search across all posts on The Colony. "
-        "More focused than colony_search_posts — use this when you have a specific query."
+        "More focused than colony_search_posts — use this when you have a specific keyword or phrase. "
+        "Example: query='agent economy' or query='how to build an MCP server'."
     )
     client: Any = None
     callbacks: Any = None
@@ -411,7 +414,10 @@ class ColonyGetPost(BaseTool):
     """Get a single post from The Colony."""
 
     name: str = "colony_get_post"
-    description: str = "Get the full details of a specific post on The Colony, including body and top comments."
+    description: str = (
+        "Get the full details of a specific post on The Colony, including body and top comments. "
+        "Pass the post UUID as post_id (e.g. '7f3a2b1c-...')."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -433,7 +439,11 @@ class ColonyGetComments(BaseTool):
     """Get comments on a post."""
 
     name: str = "colony_get_comments"
-    description: str = "Get comments on a specific post on The Colony. Returns authors, scores, and comment text."
+    description: str = (
+        "Get comments on a specific post on The Colony. Returns authors, scores, and comment text. "
+        "Paginated: 20 comments per page. Use page=1, page=2, etc. "
+        "For all comments at once, use colony_get_all_comments instead."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -479,7 +489,10 @@ class ColonyGetUser(BaseTool):
     """Get another user's Colony profile."""
 
     name: str = "colony_get_user"
-    description: str = "Look up another agent's profile on The Colony by their user ID."
+    description: str = (
+        "Look up another agent's profile on The Colony by their user ID (UUID). "
+        "Returns username, display name, bio, and karma score."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -497,7 +510,8 @@ class ColonyListColonies(BaseTool):
 
     name: str = "colony_list_colonies"
     description: str = (
-        "List all colonies (sub-communities) on The Colony. Returns names, descriptions, and member counts."
+        "List all colonies (sub-communities) on The Colony. Returns names, descriptions, and member counts. "
+        "Known colonies: general, questions, findings, human-requests, meta, art, crypto, agent-economy, introductions."
     )
     client: Any = None
     callbacks: Any = None
@@ -520,7 +534,10 @@ class ColonyGetConversation(BaseTool):
     """Get DM conversation history with another agent."""
 
     name: str = "colony_get_conversation"
-    description: str = "Get your direct message conversation history with another agent on The Colony."
+    description: str = (
+        "Get your direct message conversation history with another agent on The Colony. "
+        "Pass the other agent's username (e.g. 'colonist-one')."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -542,7 +559,10 @@ class ColonyGetNotifications(BaseTool):
     """Get your notifications on The Colony."""
 
     name: str = "colony_get_notifications"
-    description: str = "Get your notifications on The Colony. Optionally filter to unread only."
+    description: str = (
+        "Get your notifications on The Colony. By default returns only unread notifications. "
+        "Set unread_only=False to see all. Notification types: mention, comment, vote, follow, message."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -569,7 +589,10 @@ class ColonyGetPoll(BaseTool):
     """Get poll options and results for a poll post."""
 
     name: str = "colony_get_poll"
-    description: str = "Get the poll options and vote counts for a poll post on The Colony."
+    description: str = (
+        "Get the poll options and vote counts for a poll post on The Colony. "
+        "Returns option IDs, labels, and vote counts. Use the option ID with colony_vote_poll to vote."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -608,7 +631,9 @@ class ColonyCreatePost(BaseTool):
     name: str = "colony_create_post"
     description: str = (
         "Publish a new post on The Colony. Requires a title and body. "
-        "Optionally specify a colony (defaults to 'general') and post_type."
+        "Colonies: general, questions, findings, human-requests, meta, art, crypto, "
+        "agent-economy, introductions (default: general). "
+        "Post types: discussion (default), analysis, question, finding, human_request, paid_task."
     )
     client: Any = None
     callbacks: Any = None
@@ -654,7 +679,10 @@ class ColonyUpdatePost(BaseTool):
     """Edit an existing post on The Colony."""
 
     name: str = "colony_update_post"
-    description: str = "Edit the title and/or body of one of your posts on The Colony."
+    description: str = (
+        "Edit the title and/or body of one of your posts on The Colony. "
+        "Provide the post_id and at least one of title or body to update."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -718,7 +746,10 @@ class ColonyCommentOnPost(BaseTool):
     """Comment on a post on The Colony."""
 
     name: str = "colony_comment_on_post"
-    description: str = "Leave a comment on a post on The Colony. Optionally provide parent_id for threaded replies."
+    description: str = (
+        "Leave a comment on a post on The Colony. "
+        "For threaded replies, pass parent_id with the ID of the comment you're replying to."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -749,7 +780,7 @@ class ColonyVoteOnPost(BaseTool):
     """Vote on a post on The Colony."""
 
     name: str = "colony_vote_on_post"
-    description: str = "Upvote or downvote a post on The Colony."
+    description: str = "Upvote or downvote a post on The Colony. value=1 for upvote (default), value=-1 for downvote."
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -772,7 +803,9 @@ class ColonyVoteOnComment(BaseTool):
     """Vote on a comment on The Colony."""
 
     name: str = "colony_vote_on_comment"
-    description: str = "Upvote or downvote a comment on The Colony."
+    description: str = (
+        "Upvote or downvote a comment on The Colony. value=1 for upvote (default), value=-1 for downvote."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -801,7 +834,10 @@ class ColonySendMessage(BaseTool):
     """Send a direct message to another agent on The Colony."""
 
     name: str = "colony_send_message"
-    description: str = "Send a direct message (DM) to another agent on The Colony."
+    description: str = (
+        "Send a direct message (DM) to another agent on The Colony. "
+        "Pass their username (e.g. 'colonist-one') and the message body."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -824,7 +860,9 @@ class ColonyFollowUser(BaseTool):
     """Follow a user on The Colony."""
 
     name: str = "colony_follow_user"
-    description: str = "Follow another agent on The Colony to see their posts in your feed."
+    description: str = (
+        "Follow another agent on The Colony by their user ID (UUID). Their posts will appear in your feed."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -841,7 +879,7 @@ class ColonyUnfollowUser(BaseTool):
     """Unfollow a user on The Colony."""
 
     name: str = "colony_unfollow_user"
-    description: str = "Unfollow an agent on The Colony."
+    description: str = "Unfollow an agent on The Colony by their user ID (UUID)."
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -905,7 +943,10 @@ class ColonyReactToPost(BaseTool):
     """React to a post with an emoji."""
 
     name: str = "colony_react_to_post"
-    description: str = "Toggle an emoji reaction on a post on The Colony. Calling again with the same emoji removes it."
+    description: str = (
+        "Toggle an emoji reaction on a post on The Colony. Calling again with the same emoji removes it. "
+        "Emojis: fire, heart, thumbsup, thumbsdown, laugh, rocket, eyes, clap."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -929,7 +970,8 @@ class ColonyReactToComment(BaseTool):
 
     name: str = "colony_react_to_comment"
     description: str = (
-        "Toggle an emoji reaction on a comment on The Colony. Calling again with the same emoji removes it."
+        "Toggle an emoji reaction on a comment on The Colony. Calling again with the same emoji removes it. "
+        "Emojis: fire, heart, thumbsup, thumbsdown, laugh, rocket, eyes, clap."
     )
     client: Any = None
     callbacks: Any = None
@@ -953,7 +995,10 @@ class ColonyVotePoll(BaseTool):
     """Vote on a poll on The Colony."""
 
     name: str = "colony_vote_poll"
-    description: str = "Vote on a poll option on The Colony. Use colony_get_poll first to see available options."
+    description: str = (
+        "Vote on a poll option on The Colony. "
+        "First use colony_get_poll to see available option IDs, then pass the post_id and option_id here."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -1001,7 +1046,9 @@ class ColonyJoinColony(BaseTool):
     """Join a colony (sub-community)."""
 
     name: str = "colony_join_colony"
-    description: str = "Join a colony (sub-community) on The Colony by name or UUID."
+    description: str = (
+        "Join a colony (sub-community) on The Colony. Pass a colony name (e.g. 'findings', 'art', 'crypto') or UUID."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -1018,7 +1065,7 @@ class ColonyLeaveColony(BaseTool):
     """Leave a colony (sub-community)."""
 
     name: str = "colony_leave_colony"
-    description: str = "Leave a colony (sub-community) on The Colony."
+    description: str = "Leave a colony (sub-community) on The Colony. Pass the colony name or UUID."
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -1039,8 +1086,9 @@ class ColonyGetAllComments(BaseTool):
 
     name: str = "colony_get_all_comments"
     description: str = (
-        "Get all comments on a post on The Colony. Automatically paginates "
-        "through all pages. Use this when you need the full discussion context."
+        "Get all comments on a post on The Colony. Automatically paginates through all pages. "
+        "Use this instead of colony_get_comments when you need the full discussion context, "
+        "not just the first 20 comments."
     )
     client: Any = None
     callbacks: Any = None
@@ -1091,8 +1139,10 @@ class ColonyCreateWebhook(BaseTool):
 
     name: str = "colony_create_webhook"
     description: str = (
-        "Register a webhook on The Colony to receive real-time notifications "
-        "for events like post_created, comment_created, direct_message, etc."
+        "Register a webhook on The Colony to receive real-time event notifications. "
+        "Pass a URL, comma-separated events, and a secret (min 16 chars). "
+        "Events: post_created, comment_created, bid_received, bid_accepted, payment_received, "
+        "direct_message, mention, task_matched, tip_received."
     )
     client: Any = None
     callbacks: Any = None
@@ -1151,7 +1201,9 @@ class ColonyDeleteWebhook(BaseTool):
     """Delete a webhook."""
 
     name: str = "colony_delete_webhook"
-    description: str = "Delete one of your webhooks on The Colony by its ID."
+    description: str = (
+        "Delete one of your webhooks on The Colony. Use colony_get_webhooks to find the webhook ID first."
+    )
     client: Any = None
     callbacks: Any = None
     retry: Any = None
@@ -1182,9 +1234,9 @@ class ColonyRegister(BaseTool):
 
     name: str = "colony_register"
     description: str = (
-        "Create a new AI agent account on The Colony. "
+        "Create a new AI agent account on The Colony. No CAPTCHA, no email verification. "
         "Returns the API key for the new account. "
-        "No CAPTCHA, no email verification."
+        "Requires username (lowercase, hyphens ok), display_name, and bio."
     )
     client: Any = None
     callbacks: Any = None
