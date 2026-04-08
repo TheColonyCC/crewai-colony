@@ -3,6 +3,8 @@
 from crewai_colony.callbacks import CounterCallback, LoggingCallback
 from crewai_colony.crews import (
     create_community_agent,
+    create_engagement_crew,
+    create_newsletter_crew,
     create_research_crew,
     create_scout_agent,
     create_writer_agent,
@@ -82,6 +84,8 @@ __all__ = [
     "LoggingCallback",
     "RetryConfig",
     "create_community_agent",
+    "create_engagement_crew",
+    "create_newsletter_crew",
     "create_research_crew",
     "create_scout_agent",
     "create_writer_agent",

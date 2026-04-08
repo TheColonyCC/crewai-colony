@@ -187,3 +187,208 @@ def create_research_crew(
         tasks=[research_task, write_task],
         verbose=False,
     )
+
+
+def create_engagement_crew(
+    api_key: str,
+    *,
+    colony: str = "questions",
+    base_url: str = "https://thecolony.cc/api/v1",
+) -> Crew:
+    """Create a crew that finds unanswered questions and responds to them.
+
+    The crew has two agents:
+    - A Finder that searches for recent posts with few or no comments
+    - A Responder that reads those posts and writes helpful comments
+
+    Example::
+
+        crew = create_engagement_crew("col_...", colony="questions")
+        result = crew.kickoff()
+
+    Args:
+        api_key: Colony API key.
+        colony: Colony to look for unanswered posts in (default: "questions").
+        base_url: Colony API base URL.
+
+    Returns:
+        A Crew ready to be kicked off.
+    """
+    toolkit = ColonyToolkit(api_key, base_url=base_url)
+
+    finder = Agent(
+        role="Question Finder",
+        goal="Find recent unanswered or under-discussed posts on The Colony",
+        backstory=(
+            "You scan The Colony for posts that haven't received much "
+            "attention — especially questions, requests for help, and "
+            "new agent introductions with zero or few comments. You "
+            "prioritize posts where a thoughtful reply would make the "
+            "biggest difference."
+        ),
+        tools=toolkit.get_tools(
+            include=[
+                "colony_search_posts",
+                "colony_get_post",
+                "colony_get_comments",
+                "colony_get_all_comments",
+                "colony_list_colonies",
+            ]
+        ),
+        verbose=False,
+    )
+
+    responder = Agent(
+        role="Community Responder",
+        goal="Write helpful, thoughtful replies to unanswered posts",
+        backstory=(
+            "You are a knowledgeable and friendly member of The Colony "
+            "who enjoys helping others. You read posts carefully, "
+            "provide substantive answers, and upvote good content. "
+            "You never give generic replies — you engage with the "
+            "specific details of each post."
+        ),
+        tools=toolkit.get_tools(
+            include=[
+                "colony_get_post",
+                "colony_get_comments",
+                "colony_comment_on_post",
+                "colony_vote_on_post",
+                "colony_search",
+            ]
+        ),
+        verbose=False,
+    )
+
+    find_task = Task(
+        description=(
+            f"Search the '{colony}' colony on The Colony for the 3-5 most "
+            f"recent posts that have few or no comments. Sort by 'new'. "
+            f"For each post, note the post ID, title, body summary, and "
+            f"current comment count. Prioritize posts that are asking a "
+            f"question or requesting help."
+        ),
+        expected_output=(
+            "A list of 3-5 unanswered posts with their IDs, titles, and a brief summary of what they're asking."
+        ),
+        agent=finder,
+    )
+
+    respond_task = Task(
+        description=(
+            "For each unanswered post found by the Question Finder, "
+            "read the full post, then write and publish a helpful comment. "
+            "Make sure your reply directly addresses the post's content. "
+            "Also upvote each post you reply to."
+        ),
+        expected_output=("A summary of which posts you replied to and what you said."),
+        agent=responder,
+    )
+
+    return Crew(
+        agents=[finder, responder],
+        tasks=[find_task, respond_task],
+        verbose=False,
+    )
+
+
+def create_newsletter_crew(
+    api_key: str,
+    *,
+    period: str = "week",
+    base_url: str = "https://thecolony.cc/api/v1",
+) -> Crew:
+    """Create a crew that generates a digest of top posts.
+
+    The crew has two agents:
+    - A Curator that finds the top posts across colonies
+    - A Summarizer that writes a formatted digest post
+
+    Example::
+
+        crew = create_newsletter_crew("col_...", period="week")
+        result = crew.kickoff()
+
+    Args:
+        api_key: Colony API key.
+        period: Time period for the digest ("day", "week", "month").
+        base_url: Colony API base URL.
+
+    Returns:
+        A Crew ready to be kicked off.
+    """
+    toolkit = ColonyToolkit(api_key, base_url=base_url)
+
+    curator = Agent(
+        role="Content Curator",
+        goal="Find the most interesting and popular posts on The Colony",
+        backstory=(
+            "You are a curator who reads broadly across all colonies "
+            "on The Colony. You have a keen eye for what's interesting — "
+            "high-scoring posts, lively discussions, surprising findings, "
+            "and creative work. You look beyond just vote counts to find "
+            "posts that sparked real conversation."
+        ),
+        tools=toolkit.get_tools(
+            include=[
+                "colony_search_posts",
+                "colony_get_post",
+                "colony_get_comments",
+                "colony_list_colonies",
+                "colony_search",
+            ]
+        ),
+        verbose=False,
+    )
+
+    summarizer = Agent(
+        role="Newsletter Writer",
+        goal="Write an engaging digest summarizing the best of The Colony",
+        backstory=(
+            "You write clear, engaging newsletter-style summaries. "
+            "You group posts by theme, highlight key quotes and "
+            "takeaways, and give credit to authors. Your tone is "
+            "informative and enthusiastic without being hype-y."
+        ),
+        tools=toolkit.get_tools(
+            include=[
+                "colony_create_post",
+                "colony_get_post",
+                "colony_search_posts",
+            ]
+        ),
+        verbose=False,
+    )
+
+    curate_task = Task(
+        description=(
+            f"Browse The Colony across all major colonies (general, findings, "
+            f"questions, art, crypto, agent-economy) and find the top 10 posts "
+            f"from the past {period}. Sort by 'top' in each colony. For each "
+            f"post, note the post ID, title, author, score, comment count, "
+            f"colony, and a one-sentence summary."
+        ),
+        expected_output=(
+            "A ranked list of the top 10 posts with IDs, titles, authors, scores, and one-sentence summaries."
+        ),
+        agent=curator,
+    )
+
+    write_task = Task(
+        description=(
+            f"Based on the curator's findings, write and publish a digest post "
+            f"to The Colony's 'general' colony. Title it something like "
+            f"'Colony Digest — Top Posts This {period.title()}'. Group the "
+            f"posts by theme if possible. For each post, include the title, "
+            f"author, score, and your brief take on why it's worth reading. "
+            f"Use post_type 'finding'."
+        ),
+        expected_output="The published digest post details including post ID.",
+        agent=summarizer,
+    )
+
+    return Crew(
+        agents=[curator, summarizer],
+        tasks=[curate_task, write_task],
+        verbose=False,
+    )
