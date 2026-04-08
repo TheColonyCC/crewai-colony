@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 from crewai.tools import BaseTool
+
+# ── Retry logic ────────────────────────────────────────────────────
+
+_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+_MAX_RETRIES = 3
+_BASE_DELAY = 1.0
+_MAX_DELAY = 10.0
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Check if an exception is transient and worth retrying."""
+    # ColonyAPIError has a .status attribute
+    status = getattr(exc, "status", None)
+    if status is not None and status in _RETRYABLE_STATUSES:
+        return True
+    # Network errors
+    return isinstance(exc, (TimeoutError, ConnectionError, OSError))
+
 
 # ── Output formatters ──────────────────────────────────────────────
 
@@ -171,6 +191,19 @@ def _fmt_poll(data: Any) -> str:
     return "\n".join(lines)
 
 
+def _fmt_search(data: Any) -> str:
+    """Format search results."""
+    if isinstance(data, dict):
+        results = data.get("results", data.get("posts", []))
+    elif isinstance(data, list):
+        results = data
+    else:
+        return str(data)
+    if not results:
+        return "No results found."
+    return "\n\n".join(_fmt_post(p) for p in results)
+
+
 def _fmt_simple(data: Any) -> str:
     """Format a simple action response."""
     if isinstance(data, dict):
@@ -185,13 +218,33 @@ def _fmt_simple(data: Any) -> str:
     return str(data)
 
 
+def _fmt_unread(data: Any) -> str:
+    """Format unread DM count."""
+    if isinstance(data, dict):
+        count = data.get("count", data.get("unread_count", 0))
+        return f"Unread DMs: {count}"
+    return str(data)
+
+
 def _safe_run(func: Any, fmt: Any = _fmt_simple, *args: Any, **kwargs: Any) -> str:
-    """Call a Colony SDK method, format the result, and return error strings on failure."""
-    try:
-        result = func(*args, **kwargs)
-        return fmt(result)
-    except Exception as e:
-        return f"Error: {e}"
+    """Call a Colony SDK method with retry, format the result."""
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            result = func(*args, **kwargs)
+            return fmt(result)
+        except Exception as e:
+            last_exc = e
+            if not _is_retryable(e) or attempt == _MAX_RETRIES - 1:
+                return f"Error: {e}"
+            delay = min(_BASE_DELAY * (2**attempt), _MAX_DELAY)
+            time.sleep(delay)
+    return f"Error: {last_exc}"
+
+
+async def _async_safe_run(func: Any, fmt: Any = _fmt_simple, *args: Any, **kwargs: Any) -> str:
+    """Async wrapper — runs the sync SDK call in a thread."""
+    return await asyncio.to_thread(_safe_run, func, fmt, *args, **kwargs)
 
 
 # ── Read-only tools ────────────────────────────────────────────────
@@ -224,6 +277,40 @@ class ColonySearchPosts(BaseTool):
             search=query or None,
         )
 
+    async def _arun(
+        self,
+        query: str = "",
+        colony: str | None = None,
+        sort: str = "hot",
+        limit: int = 10,
+    ) -> str:
+        return await _async_safe_run(
+            self.client.get_posts,
+            _fmt_posts,
+            colony=colony,
+            sort=sort,
+            limit=limit,
+            search=query or None,
+        )
+
+
+class ColonySearch(BaseTool):
+    """Full-text search across all posts on The Colony."""
+
+    name: str = "colony_search"
+    description: str = (
+        "Full-text search across all posts on The Colony. "
+        "More focused than colony_search_posts — use this when you have a specific query."
+    )
+    client: Any = None
+
+    def _run(self, query: str, limit: int = 20) -> str:
+        """Search for posts matching the query."""
+        return _safe_run(self.client.search, _fmt_search, query, limit=limit)
+
+    async def _arun(self, query: str, limit: int = 20) -> str:
+        return await _async_safe_run(self.client.search, _fmt_search, query, limit=limit)
+
 
 class ColonyGetPost(BaseTool):
     """Get a single post from The Colony."""
@@ -235,6 +322,9 @@ class ColonyGetPost(BaseTool):
     def _run(self, post_id: str) -> str:
         """Get a post by its ID."""
         return _safe_run(self.client.get_post, _fmt_post_detail, post_id)
+
+    async def _arun(self, post_id: str) -> str:
+        return await _async_safe_run(self.client.get_post, _fmt_post_detail, post_id)
 
 
 class ColonyGetComments(BaseTool):
@@ -248,6 +338,9 @@ class ColonyGetComments(BaseTool):
         """Get comments on a post. 20 per page."""
         return _safe_run(self.client.get_comments, _fmt_comments, post_id, page=page)
 
+    async def _arun(self, post_id: str, page: int = 1) -> str:
+        return await _async_safe_run(self.client.get_comments, _fmt_comments, post_id, page=page)
+
 
 class ColonyGetMe(BaseTool):
     """Get your own Colony profile."""
@@ -260,6 +353,9 @@ class ColonyGetMe(BaseTool):
         """Get your profile."""
         return _safe_run(self.client.get_me, _fmt_user)
 
+    async def _arun(self) -> str:
+        return await _async_safe_run(self.client.get_me, _fmt_user)
+
 
 class ColonyGetUser(BaseTool):
     """Get another user's Colony profile."""
@@ -271,6 +367,9 @@ class ColonyGetUser(BaseTool):
     def _run(self, user_id: str) -> str:
         """Get a user's profile by ID."""
         return _safe_run(self.client.get_user, _fmt_user, user_id)
+
+    async def _arun(self, user_id: str) -> str:
+        return await _async_safe_run(self.client.get_user, _fmt_user, user_id)
 
 
 class ColonyListColonies(BaseTool):
@@ -286,6 +385,9 @@ class ColonyListColonies(BaseTool):
         """List colonies."""
         return _safe_run(self.client.get_colonies, _fmt_colonies, limit=limit)
 
+    async def _arun(self, limit: int = 50) -> str:
+        return await _async_safe_run(self.client.get_colonies, _fmt_colonies, limit=limit)
+
 
 class ColonyGetConversation(BaseTool):
     """Get DM conversation history with another agent."""
@@ -298,6 +400,9 @@ class ColonyGetConversation(BaseTool):
         """Get DM history with a user by their username."""
         return _safe_run(self.client.get_conversation, _fmt_conversation, username)
 
+    async def _arun(self, username: str) -> str:
+        return await _async_safe_run(self.client.get_conversation, _fmt_conversation, username)
+
 
 class ColonyGetNotifications(BaseTool):
     """Get your notifications on The Colony."""
@@ -308,7 +413,18 @@ class ColonyGetNotifications(BaseTool):
 
     def _run(self, unread_only: bool = True) -> str:
         """Get notifications. Set unread_only=False to see all."""
-        return _safe_run(self.client.get_notifications, _fmt_notifications, unread_only=unread_only)
+        return _safe_run(
+            self.client.get_notifications,
+            _fmt_notifications,
+            unread_only=unread_only,
+        )
+
+    async def _arun(self, unread_only: bool = True) -> str:
+        return await _async_safe_run(
+            self.client.get_notifications,
+            _fmt_notifications,
+            unread_only=unread_only,
+        )
 
 
 class ColonyGetPoll(BaseTool):
@@ -321,6 +437,24 @@ class ColonyGetPoll(BaseTool):
     def _run(self, post_id: str) -> str:
         """Get poll results for a post."""
         return _safe_run(self.client.get_poll, _fmt_poll, post_id)
+
+    async def _arun(self, post_id: str) -> str:
+        return await _async_safe_run(self.client.get_poll, _fmt_poll, post_id)
+
+
+class ColonyGetUnreadCount(BaseTool):
+    """Get unread DM count."""
+
+    name: str = "colony_get_unread_count"
+    description: str = "Get the number of unread direct messages on The Colony."
+    client: Any = None
+
+    def _run(self) -> str:
+        """Get unread DM count."""
+        return _safe_run(self.client.get_unread_count, _fmt_unread)
+
+    async def _arun(self) -> str:
+        return await _async_safe_run(self.client.get_unread_count, _fmt_unread)
 
 
 # ── Write tools ────────────────────────────────────────────────────
@@ -353,6 +487,76 @@ class ColonyCreatePost(BaseTool):
             post_type=post_type,
         )
 
+    async def _arun(
+        self,
+        title: str,
+        body: str,
+        colony: str = "general",
+        post_type: str = "discussion",
+    ) -> str:
+        return await _async_safe_run(
+            self.client.create_post,
+            _fmt_simple,
+            title=title,
+            body=body,
+            colony=colony,
+            post_type=post_type,
+        )
+
+
+class ColonyUpdatePost(BaseTool):
+    """Edit an existing post on The Colony."""
+
+    name: str = "colony_update_post"
+    description: str = "Edit the title and/or body of one of your posts on The Colony."
+    client: Any = None
+
+    def _run(
+        self,
+        post_id: str,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> str:
+        """Update a post. Provide at least one of title or body."""
+        kwargs: dict[str, str] = {}
+        if title is not None:
+            kwargs["title"] = title
+        if body is not None:
+            kwargs["body"] = body
+        if not kwargs:
+            return "Error: provide at least one of title or body"
+        return _safe_run(self.client.update_post, _fmt_simple, post_id, **kwargs)
+
+    async def _arun(
+        self,
+        post_id: str,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> str:
+        kwargs: dict[str, str] = {}
+        if title is not None:
+            kwargs["title"] = title
+        if body is not None:
+            kwargs["body"] = body
+        if not kwargs:
+            return "Error: provide at least one of title or body"
+        return await _async_safe_run(self.client.update_post, _fmt_simple, post_id, **kwargs)
+
+
+class ColonyDeletePost(BaseTool):
+    """Delete one of your posts on The Colony."""
+
+    name: str = "colony_delete_post"
+    description: str = "Permanently delete one of your posts on The Colony. This cannot be undone."
+    client: Any = None
+
+    def _run(self, post_id: str) -> str:
+        """Delete a post by ID."""
+        return _safe_run(self.client.delete_post, _fmt_simple, post_id)
+
+    async def _arun(self, post_id: str) -> str:
+        return await _async_safe_run(self.client.delete_post, _fmt_simple, post_id)
+
 
 class ColonyCommentOnPost(BaseTool):
     """Comment on a post on The Colony."""
@@ -364,6 +568,15 @@ class ColonyCommentOnPost(BaseTool):
     def _run(self, post_id: str, body: str, parent_id: str | None = None) -> str:
         """Comment on a post. Use parent_id to reply to a specific comment."""
         return _safe_run(
+            self.client.create_comment,
+            _fmt_simple,
+            post_id,
+            body,
+            parent_id=parent_id,
+        )
+
+    async def _arun(self, post_id: str, body: str, parent_id: str | None = None) -> str:
+        return await _async_safe_run(
             self.client.create_comment,
             _fmt_simple,
             post_id,
@@ -383,6 +596,9 @@ class ColonyVoteOnPost(BaseTool):
         """Vote on a post. value=1 for upvote, value=-1 for downvote."""
         return _safe_run(self.client.vote_post, _fmt_simple, post_id, value=value)
 
+    async def _arun(self, post_id: str, value: int = 1) -> str:
+        return await _async_safe_run(self.client.vote_post, _fmt_simple, post_id, value=value)
+
 
 class ColonyVoteOnComment(BaseTool):
     """Vote on a comment on The Colony."""
@@ -394,6 +610,9 @@ class ColonyVoteOnComment(BaseTool):
     def _run(self, comment_id: str, value: int = 1) -> str:
         """Vote on a comment. value=1 for upvote, value=-1 for downvote."""
         return _safe_run(self.client.vote_comment, _fmt_simple, comment_id, value=value)
+
+    async def _arun(self, comment_id: str, value: int = 1) -> str:
+        return await _async_safe_run(self.client.vote_comment, _fmt_simple, comment_id, value=value)
 
 
 class ColonySendMessage(BaseTool):
@@ -407,6 +626,9 @@ class ColonySendMessage(BaseTool):
         """Send a DM to another agent by username."""
         return _safe_run(self.client.send_message, _fmt_simple, username, body)
 
+    async def _arun(self, username: str, body: str) -> str:
+        return await _async_safe_run(self.client.send_message, _fmt_simple, username, body)
+
 
 class ColonyFollowUser(BaseTool):
     """Follow a user on The Colony."""
@@ -418,6 +640,9 @@ class ColonyFollowUser(BaseTool):
     def _run(self, user_id: str) -> str:
         """Follow a user by their ID."""
         return _safe_run(self.client.follow, _fmt_simple, user_id)
+
+    async def _arun(self, user_id: str) -> str:
+        return await _async_safe_run(self.client.follow, _fmt_simple, user_id)
 
 
 class ColonyUnfollowUser(BaseTool):
@@ -431,14 +656,17 @@ class ColonyUnfollowUser(BaseTool):
         """Unfollow a user by their ID."""
         return _safe_run(self.client.unfollow, _fmt_simple, user_id)
 
+    async def _arun(self, user_id: str) -> str:
+        return await _async_safe_run(self.client.unfollow, _fmt_simple, user_id)
+
 
 class ColonyUpdateProfile(BaseTool):
     """Update your Colony profile."""
 
     name: str = "colony_update_profile"
     description: str = (
-        "Update your profile on The Colony. You can change your display_name, bio, "
-        "lightning_address, nostr_pubkey, or evm_address."
+        "Update your profile on The Colony. You can change your "
+        "display_name, bio, lightning_address, nostr_pubkey, or evm_address."
     )
     client: Any = None
 
@@ -448,7 +676,7 @@ class ColonyUpdateProfile(BaseTool):
         bio: str | None = None,
     ) -> str:
         """Update your profile fields."""
-        fields = {}
+        fields: dict[str, str] = {}
         if display_name is not None:
             fields["display_name"] = display_name
         if bio is not None:
@@ -456,6 +684,20 @@ class ColonyUpdateProfile(BaseTool):
         if not fields:
             return "Error: provide at least one field to update (display_name, bio)"
         return _safe_run(self.client.update_profile, _fmt_simple, **fields)
+
+    async def _arun(
+        self,
+        display_name: str | None = None,
+        bio: str | None = None,
+    ) -> str:
+        fields: dict[str, str] = {}
+        if display_name is not None:
+            fields["display_name"] = display_name
+        if bio is not None:
+            fields["bio"] = bio
+        if not fields:
+            return "Error: provide at least one field to update (display_name, bio)"
+        return await _async_safe_run(self.client.update_profile, _fmt_simple, **fields)
 
 
 class ColonyReactToPost(BaseTool):
@@ -468,6 +710,9 @@ class ColonyReactToPost(BaseTool):
     def _run(self, post_id: str, emoji: str) -> str:
         """React to a post with an emoji (e.g. 'fire', 'heart', 'thumbsup')."""
         return _safe_run(self.client.react_post, _fmt_simple, post_id, emoji)
+
+    async def _arun(self, post_id: str, emoji: str) -> str:
+        return await _async_safe_run(self.client.react_post, _fmt_simple, post_id, emoji)
 
 
 class ColonyReactToComment(BaseTool):
@@ -483,6 +728,9 @@ class ColonyReactToComment(BaseTool):
         """React to a comment with an emoji."""
         return _safe_run(self.client.react_comment, _fmt_simple, comment_id, emoji)
 
+    async def _arun(self, comment_id: str, emoji: str) -> str:
+        return await _async_safe_run(self.client.react_comment, _fmt_simple, comment_id, emoji)
+
 
 class ColonyVotePoll(BaseTool):
     """Vote on a poll on The Colony."""
@@ -494,6 +742,9 @@ class ColonyVotePoll(BaseTool):
     def _run(self, post_id: str, option_id: str) -> str:
         """Vote on a poll option."""
         return _safe_run(self.client.vote_poll, _fmt_simple, post_id, option_id)
+
+    async def _arun(self, post_id: str, option_id: str) -> str:
+        return await _async_safe_run(self.client.vote_poll, _fmt_simple, post_id, option_id)
 
 
 class ColonyMarkNotificationsRead(BaseTool):
@@ -511,6 +762,13 @@ class ColonyMarkNotificationsRead(BaseTool):
         except Exception as e:
             return f"Error: {e}"
 
+    async def _arun(self) -> str:
+        try:
+            await asyncio.to_thread(self.client.mark_notifications_read)
+            return "OK — all notifications marked as read"
+        except Exception as e:
+            return f"Error: {e}"
+
 
 class ColonyJoinColony(BaseTool):
     """Join a colony (sub-community)."""
@@ -522,6 +780,9 @@ class ColonyJoinColony(BaseTool):
     def _run(self, colony: str) -> str:
         """Join a colony by name (e.g. 'findings') or UUID."""
         return _safe_run(self.client.join_colony, _fmt_simple, colony)
+
+    async def _arun(self, colony: str) -> str:
+        return await _async_safe_run(self.client.join_colony, _fmt_simple, colony)
 
 
 class ColonyLeaveColony(BaseTool):
@@ -535,11 +796,15 @@ class ColonyLeaveColony(BaseTool):
         """Leave a colony by name or UUID."""
         return _safe_run(self.client.leave_colony, _fmt_simple, colony)
 
+    async def _arun(self, colony: str) -> str:
+        return await _async_safe_run(self.client.leave_colony, _fmt_simple, colony)
+
 
 # ── Tool registry ──────────────────────────────────────────────────
 
 READ_TOOLS: list[type[BaseTool]] = [
     ColonySearchPosts,
+    ColonySearch,
     ColonyGetPost,
     ColonyGetComments,
     ColonyGetMe,
@@ -548,10 +813,13 @@ READ_TOOLS: list[type[BaseTool]] = [
     ColonyGetConversation,
     ColonyGetNotifications,
     ColonyGetPoll,
+    ColonyGetUnreadCount,
 ]
 
 WRITE_TOOLS: list[type[BaseTool]] = [
     ColonyCreatePost,
+    ColonyUpdatePost,
+    ColonyDeletePost,
     ColonyCommentOnPost,
     ColonyVoteOnPost,
     ColonyVoteOnComment,
