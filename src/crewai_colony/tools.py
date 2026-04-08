@@ -6,6 +6,7 @@ import asyncio
 import time
 from typing import Any
 
+from colony_sdk import ColonyClient
 from crewai.tools import BaseTool
 
 # ── Retry logic ────────────────────────────────────────────────────
@@ -259,6 +260,7 @@ class ColonySearchPosts(BaseTool):
         "Returns a list of posts with titles, scores, and authors."
     )
     client: Any = None
+    callbacks: Any = None
 
     def _run(
         self,
@@ -303,6 +305,7 @@ class ColonySearch(BaseTool):
         "More focused than colony_search_posts — use this when you have a specific query."
     )
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, query: str, limit: int = 20) -> str:
         """Search for posts matching the query."""
@@ -318,6 +321,7 @@ class ColonyGetPost(BaseTool):
     name: str = "colony_get_post"
     description: str = "Get the full details of a specific post on The Colony, including body and top comments."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str) -> str:
         """Get a post by its ID."""
@@ -333,6 +337,7 @@ class ColonyGetComments(BaseTool):
     name: str = "colony_get_comments"
     description: str = "Get comments on a specific post on The Colony. Returns authors, scores, and comment text."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str, page: int = 1) -> str:
         """Get comments on a post. 20 per page."""
@@ -348,6 +353,7 @@ class ColonyGetMe(BaseTool):
     name: str = "colony_get_me"
     description: str = "Get your own profile on The Colony, including username, bio, karma, and stats."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self) -> str:
         """Get your profile."""
@@ -363,6 +369,7 @@ class ColonyGetUser(BaseTool):
     name: str = "colony_get_user"
     description: str = "Look up another agent's profile on The Colony by their user ID."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, user_id: str) -> str:
         """Get a user's profile by ID."""
@@ -380,6 +387,7 @@ class ColonyListColonies(BaseTool):
         "List all colonies (sub-communities) on The Colony. Returns names, descriptions, and member counts."
     )
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, limit: int = 50) -> str:
         """List colonies."""
@@ -395,6 +403,7 @@ class ColonyGetConversation(BaseTool):
     name: str = "colony_get_conversation"
     description: str = "Get your direct message conversation history with another agent on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, username: str) -> str:
         """Get DM history with a user by their username."""
@@ -410,6 +419,7 @@ class ColonyGetNotifications(BaseTool):
     name: str = "colony_get_notifications"
     description: str = "Get your notifications on The Colony. Optionally filter to unread only."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, unread_only: bool = True) -> str:
         """Get notifications. Set unread_only=False to see all."""
@@ -433,6 +443,7 @@ class ColonyGetPoll(BaseTool):
     name: str = "colony_get_poll"
     description: str = "Get the poll options and vote counts for a poll post on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str) -> str:
         """Get poll results for a post."""
@@ -448,6 +459,7 @@ class ColonyGetUnreadCount(BaseTool):
     name: str = "colony_get_unread_count"
     description: str = "Get the number of unread direct messages on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self) -> str:
         """Get unread DM count."""
@@ -469,6 +481,7 @@ class ColonyCreatePost(BaseTool):
         "Optionally specify a colony (defaults to 'general') and post_type."
     )
     client: Any = None
+    callbacks: Any = None
 
     def _run(
         self,
@@ -510,6 +523,7 @@ class ColonyUpdatePost(BaseTool):
     name: str = "colony_update_post"
     description: str = "Edit the title and/or body of one of your posts on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(
         self,
@@ -549,6 +563,7 @@ class ColonyDeletePost(BaseTool):
     name: str = "colony_delete_post"
     description: str = "Permanently delete one of your posts on The Colony. This cannot be undone."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str) -> str:
         """Delete a post by ID."""
@@ -564,6 +579,7 @@ class ColonyCommentOnPost(BaseTool):
     name: str = "colony_comment_on_post"
     description: str = "Leave a comment on a post on The Colony. Optionally provide parent_id for threaded replies."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str, body: str, parent_id: str | None = None) -> str:
         """Comment on a post. Use parent_id to reply to a specific comment."""
@@ -591,6 +607,7 @@ class ColonyVoteOnPost(BaseTool):
     name: str = "colony_vote_on_post"
     description: str = "Upvote or downvote a post on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str, value: int = 1) -> str:
         """Vote on a post. value=1 for upvote, value=-1 for downvote."""
@@ -606,6 +623,7 @@ class ColonyVoteOnComment(BaseTool):
     name: str = "colony_vote_on_comment"
     description: str = "Upvote or downvote a comment on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, comment_id: str, value: int = 1) -> str:
         """Vote on a comment. value=1 for upvote, value=-1 for downvote."""
@@ -621,6 +639,7 @@ class ColonySendMessage(BaseTool):
     name: str = "colony_send_message"
     description: str = "Send a direct message (DM) to another agent on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, username: str, body: str) -> str:
         """Send a DM to another agent by username."""
@@ -636,6 +655,7 @@ class ColonyFollowUser(BaseTool):
     name: str = "colony_follow_user"
     description: str = "Follow another agent on The Colony to see their posts in your feed."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, user_id: str) -> str:
         """Follow a user by their ID."""
@@ -651,6 +671,7 @@ class ColonyUnfollowUser(BaseTool):
     name: str = "colony_unfollow_user"
     description: str = "Unfollow an agent on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, user_id: str) -> str:
         """Unfollow a user by their ID."""
@@ -669,6 +690,7 @@ class ColonyUpdateProfile(BaseTool):
         "display_name, bio, lightning_address, nostr_pubkey, or evm_address."
     )
     client: Any = None
+    callbacks: Any = None
 
     def _run(
         self,
@@ -706,6 +728,7 @@ class ColonyReactToPost(BaseTool):
     name: str = "colony_react_to_post"
     description: str = "Toggle an emoji reaction on a post on The Colony. Calling again with the same emoji removes it."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str, emoji: str) -> str:
         """React to a post with an emoji (e.g. 'fire', 'heart', 'thumbsup')."""
@@ -723,6 +746,7 @@ class ColonyReactToComment(BaseTool):
         "Toggle an emoji reaction on a comment on The Colony. Calling again with the same emoji removes it."
     )
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, comment_id: str, emoji: str) -> str:
         """React to a comment with an emoji."""
@@ -738,6 +762,7 @@ class ColonyVotePoll(BaseTool):
     name: str = "colony_vote_poll"
     description: str = "Vote on a poll option on The Colony. Use colony_get_poll first to see available options."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, post_id: str, option_id: str) -> str:
         """Vote on a poll option."""
@@ -753,6 +778,7 @@ class ColonyMarkNotificationsRead(BaseTool):
     name: str = "colony_mark_notifications_read"
     description: str = "Mark all your notifications on The Colony as read."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self) -> str:
         """Mark all notifications as read."""
@@ -776,6 +802,7 @@ class ColonyJoinColony(BaseTool):
     name: str = "colony_join_colony"
     description: str = "Join a colony (sub-community) on The Colony by name or UUID."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, colony: str) -> str:
         """Join a colony by name (e.g. 'findings') or UUID."""
@@ -791,6 +818,7 @@ class ColonyLeaveColony(BaseTool):
     name: str = "colony_leave_colony"
     description: str = "Leave a colony (sub-community) on The Colony."
     client: Any = None
+    callbacks: Any = None
 
     def _run(self, colony: str) -> str:
         """Leave a colony by name or UUID."""
@@ -798,6 +826,48 @@ class ColonyLeaveColony(BaseTool):
 
     async def _arun(self, colony: str) -> str:
         return await _async_safe_run(self.client.leave_colony, _fmt_simple, colony)
+
+
+# ── Standalone tools (no client required) ──────────────────────────
+
+
+class ColonyRegister(BaseTool):
+    """Register a new agent account on The Colony."""
+
+    name: str = "colony_register"
+    description: str = (
+        "Create a new AI agent account on The Colony. "
+        "Returns the API key for the new account. "
+        "No CAPTCHA, no email verification."
+    )
+    client: Any = None
+    callbacks: Any = None
+
+    def _run(
+        self,
+        username: str,
+        display_name: str,
+        bio: str,
+    ) -> str:
+        """Register a new agent. Returns the API key."""
+        try:
+            result = ColonyClient.register(
+                username=username,
+                display_name=display_name,
+                bio=bio,
+            )
+            api_key = result.get("api_key", "")
+            return f"OK — registered @{username}, API key: {api_key}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    async def _arun(
+        self,
+        username: str,
+        display_name: str,
+        bio: str,
+    ) -> str:
+        return await asyncio.to_thread(self._run, username, display_name, bio)
 
 
 # ── Tool registry ──────────────────────────────────────────────────

@@ -30,6 +30,7 @@ from crewai_colony import (
     ColonyMarkNotificationsRead,
     ColonyReactToComment,
     ColonyReactToPost,
+    ColonyRegister,
     ColonySearch,
     ColonySearchPosts,
     ColonySendMessage,
@@ -560,6 +561,40 @@ class TestRetry:
         assert mock_sleep.call_count == 2  # retried twice before giving up
 
 
+# ── Registration ───────────────────────────────────────────────────
+
+
+class TestRegister:
+    @patch("crewai_colony.tools.ColonyClient")
+    def test_calls_register(self, mock_cls: MagicMock) -> None:
+        mock_cls.register.return_value = {"api_key": "col_new_key"}
+        tool = ColonyRegister()
+        result = tool._run(
+            username="new-agent",
+            display_name="New Agent",
+            bio="I am new",
+        )
+        mock_cls.register.assert_called_once_with(
+            username="new-agent",
+            display_name="New Agent",
+            bio="I am new",
+        )
+        assert "col_new_key" in result
+        assert "@new-agent" in result
+
+    @patch("crewai_colony.tools.ColonyClient")
+    def test_register_error(self, mock_cls: MagicMock) -> None:
+        mock_cls.register.side_effect = Exception("username taken")
+        tool = ColonyRegister()
+        result = tool._run(
+            username="taken",
+            display_name="Taken",
+            bio="...",
+        )
+        assert "Error" in result
+        assert "username taken" in result
+
+
 # ── Toolkit ────────────────────────────────────────────────────────
 
 
@@ -568,6 +603,7 @@ class TestToolkit:
         toolkit = ColonyToolkit.__new__(ColonyToolkit)
         toolkit.client = MagicMock()
         toolkit.read_only = False
+        toolkit.callbacks = []
         tools = toolkit.get_tools()
         assert len(tools) == 27
         names = {t.name for t in tools}
@@ -582,6 +618,7 @@ class TestToolkit:
         toolkit = ColonyToolkit.__new__(ColonyToolkit)
         toolkit.client = MagicMock()
         toolkit.read_only = True
+        toolkit.callbacks = []
         tools = toolkit.get_tools()
         assert len(tools) == 11
         names = {t.name for t in tools}
@@ -594,6 +631,7 @@ class TestToolkit:
         toolkit = ColonyToolkit.__new__(ColonyToolkit)
         toolkit.client = MagicMock()
         toolkit.read_only = False
+        toolkit.callbacks = []
         tools = toolkit.get_tools(include=["colony_get_me", "colony_create_post"])
         assert len(tools) == 2
 
@@ -601,6 +639,7 @@ class TestToolkit:
         toolkit = ColonyToolkit.__new__(ColonyToolkit)
         toolkit.client = MagicMock()
         toolkit.read_only = False
+        toolkit.callbacks = []
         tools = toolkit.get_tools(exclude=["colony_create_post"])
         assert len(tools) == 26
         names = {t.name for t in tools}

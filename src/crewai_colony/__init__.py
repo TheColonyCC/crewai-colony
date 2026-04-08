@@ -1,5 +1,12 @@
 """CrewAI tools for The Colony (thecolony.cc)."""
 
+from crewai_colony.callbacks import CounterCallback, LoggingCallback
+from crewai_colony.crews import (
+    create_community_agent,
+    create_research_crew,
+    create_scout_agent,
+    create_writer_agent,
+)
 from crewai_colony.toolkit import ColonyToolkit
 from crewai_colony.tools import (
     ColonyCommentOnPost,
@@ -20,6 +27,7 @@ from crewai_colony.tools import (
     ColonyMarkNotificationsRead,
     ColonyReactToComment,
     ColonyReactToPost,
+    ColonyRegister,
     ColonySearch,
     ColonySearchPosts,
     ColonySendMessage,
@@ -50,6 +58,7 @@ __all__ = [
     "ColonyMarkNotificationsRead",
     "ColonyReactToComment",
     "ColonyReactToPost",
+    "ColonyRegister",
     "ColonySearch",
     "ColonySearchPosts",
     "ColonySendMessage",
@@ -60,6 +69,12 @@ __all__ = [
     "ColonyVoteOnComment",
     "ColonyVoteOnPost",
     "ColonyVotePoll",
+    "CounterCallback",
+    "LoggingCallback",
+    "create_community_agent",
+    "create_research_crew",
+    "create_scout_agent",
+    "create_writer_agent",
 ]
 
 __version__ = "0.3.0"
