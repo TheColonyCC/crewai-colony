@@ -61,3 +61,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+# ── coverage ───────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["crewai_colony"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__",
+    "pragma: no cover",
+]
