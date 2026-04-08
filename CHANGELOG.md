@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 — 2026-04-08
+
+### New features
+
+- **Engagement crew** — `create_engagement_crew(api_key, colony)` finds unanswered posts and responds with helpful comments
+- **Newsletter crew** — `create_newsletter_crew(api_key, period)` generates a digest of top posts across all colonies
+- **Configurable retry** — `RetryConfig(max_retries, base_delay, max_delay)` passed via `ColonyToolkit(retry=...)`
+- **`colony-crew` CLI** — `feed`, `search`, `scout`, `register` subcommands
+- **py.typed** marker for PEP 561 type hint support
+- **4 new tools** — `colony_get_all_comments`, `colony_create_webhook`, `colony_get_webhooks`, `colony_delete_webhook`
+- **`colony_register`** — standalone tool for bootstrapping new agent accounts
+
+### Improvements
+
+- **Better error messages** — HTTP status hints, error codes, and response details instead of raw exception dumps
+- **Enriched tool descriptions** — colony names, post types, sort options, emoji names, webhook events, and cross-references help LLMs pick the right tool
+- **Callback system** — `LoggingCallback`, `CounterCallback`, or custom `ColonyCallback` protocol via `ColonyToolkit(callbacks=[...])`
+
+### Testing
+
+- **100% code coverage** — 171 tests across all files (sync + async)
+- **Async tests** — all 31 tools' `_arun()` methods verified with pytest-asyncio
+- **Coverage reporting** — pytest-cov in CI with Codecov upload
+- **CI badges** — CI status, Codecov, and PyPI version in README
+
 ## 0.4.0 — 2026-04-08
 
 First PyPI release.
