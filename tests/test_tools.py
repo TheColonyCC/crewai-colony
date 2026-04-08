@@ -14,8 +14,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from crewai_colony import (
     ColonyCommentOnPost,
     ColonyCreatePost,
+    ColonyCreateWebhook,
     ColonyDeletePost,
+    ColonyDeleteWebhook,
     ColonyFollowUser,
+    ColonyGetAllComments,
     ColonyGetComments,
     ColonyGetConversation,
     ColonyGetMe,
@@ -24,6 +27,7 @@ from crewai_colony import (
     ColonyGetPost,
     ColonyGetUnreadCount,
     ColonyGetUser,
+    ColonyGetWebhooks,
     ColonyJoinColony,
     ColonyLeaveColony,
     ColonyListColonies,
@@ -41,6 +45,7 @@ from crewai_colony import (
     ColonyVoteOnComment,
     ColonyVoteOnPost,
     ColonyVotePoll,
+    RetryConfig,
 )
 from crewai_colony.tools import _is_retryable, _safe_run
 
@@ -475,6 +480,106 @@ class TestLeaveColony:
         assert "OK" in result
 
 
+# ── New tools ──────────────────────────────────────────────────────
+
+
+class TestGetAllComments:
+    def test_calls_get_all_comments(self, mock_client: MagicMock) -> None:
+        mock_client.get_all_comments.return_value = [
+            {"id": "c1", "author": {"username": "bot"}, "body": "First!", "score": 1},
+            {"id": "c2", "author": {"username": "agent"}, "body": "Second!", "score": 2},
+        ]
+        tool = ColonyGetAllComments(client=mock_client)
+        result = tool._run(post_id="p1")
+        mock_client.get_all_comments.assert_called_once_with("p1")
+        assert "@bot" in result
+        assert "@agent" in result
+
+    def test_empty_comments(self, mock_client: MagicMock) -> None:
+        mock_client.get_all_comments.return_value = []
+        tool = ColonyGetAllComments(client=mock_client)
+        result = tool._run(post_id="p1")
+        assert "No comments" in result
+
+
+class TestCreateWebhook:
+    def test_calls_create_webhook(self, mock_client: MagicMock) -> None:
+        mock_client.create_webhook.return_value = {"id": "wh-1"}
+        tool = ColonyCreateWebhook(client=mock_client)
+        result = tool._run(
+            url="https://test.clny.cc/hook",
+            events="post_created,comment_created",
+            secret="supersecretkey1234",
+        )
+        mock_client.create_webhook.assert_called_once_with(
+            "https://test.clny.cc/hook",
+            ["post_created", "comment_created"],
+            "supersecretkey1234",
+        )
+        assert "wh-1" in result
+
+
+class TestGetWebhooks:
+    def test_calls_get_webhooks(self, mock_client: MagicMock) -> None:
+        mock_client.get_webhooks.return_value = {
+            "webhooks": [{"id": "wh-1", "url": "https://test.clny.cc/hook", "events": ["post_created"]}]
+        }
+        tool = ColonyGetWebhooks(client=mock_client)
+        result = tool._run()
+        mock_client.get_webhooks.assert_called_once()
+        assert "wh-1" in result
+        assert "test.clny.cc" in result
+
+    def test_no_webhooks(self, mock_client: MagicMock) -> None:
+        mock_client.get_webhooks.return_value = {"webhooks": []}
+        tool = ColonyGetWebhooks(client=mock_client)
+        result = tool._run()
+        assert "No webhooks" in result
+
+
+class TestDeleteWebhook:
+    def test_calls_delete_webhook(self, mock_client: MagicMock) -> None:
+        mock_client.delete_webhook.return_value = {"status": "deleted"}
+        tool = ColonyDeleteWebhook(client=mock_client)
+        result = tool._run(webhook_id="wh-1")
+        mock_client.delete_webhook.assert_called_once_with("wh-1")
+        assert "OK" in result
+
+
+# ── Configurable retry ─────────────────────────────────────────────
+
+
+class TestRetryConfig:
+    @patch("crewai_colony.tools.time.sleep")
+    def test_custom_retry_config(self, mock_sleep: MagicMock) -> None:
+        """Verify custom RetryConfig is used by tools."""
+        exc = Exception("rate limited")
+        exc.status = 429  # type: ignore[attr-defined]
+        call_count = 0
+
+        def flaky(*args: Any, **kwargs: Any) -> dict[str, str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise exc
+            return {"status": "ok"}
+
+        from crewai_colony.tools import _fmt_simple
+
+        config = RetryConfig(max_retries=5, base_delay=0.1, max_delay=1.0)
+        result = _safe_run(flaky, _fmt_simple, _retry=config)
+        assert "OK" in result
+        assert call_count == 2
+        # base_delay is 0.1 so first sleep should be 0.1
+        mock_sleep.assert_called_once_with(0.1)
+
+    def test_retry_config_defaults(self) -> None:
+        config = RetryConfig()
+        assert config.max_retries == 3
+        assert config.base_delay == 1.0
+        assert config.max_delay == 10.0
+
+
 # ── Error handling & retry ─────────────────────────────────────────
 
 
@@ -599,49 +704,39 @@ class TestRegister:
 
 
 class TestToolkit:
-    def test_get_all_tools(self) -> None:
+    def _toolkit(self, read_only: bool = False) -> ColonyToolkit:
         toolkit = ColonyToolkit.__new__(ColonyToolkit)
         toolkit.client = MagicMock()
-        toolkit.read_only = False
+        toolkit.read_only = read_only
         toolkit.callbacks = []
-        tools = toolkit.get_tools()
-        assert len(tools) == 27
+        toolkit.retry = None
+        return toolkit
+
+    def test_get_all_tools(self) -> None:
+        tools = self._toolkit().get_tools()
+        assert len(tools) == 31
         names = {t.name for t in tools}
         assert "colony_create_post" in names
-        assert "colony_search_posts" in names
-        assert "colony_search" in names
-        assert "colony_update_post" in names
-        assert "colony_delete_post" in names
-        assert "colony_get_unread_count" in names
+        assert "colony_get_all_comments" in names
+        assert "colony_create_webhook" in names
+        assert "colony_get_webhooks" in names
+        assert "colony_delete_webhook" in names
 
     def test_read_only(self) -> None:
-        toolkit = ColonyToolkit.__new__(ColonyToolkit)
-        toolkit.client = MagicMock()
-        toolkit.read_only = True
-        toolkit.callbacks = []
-        tools = toolkit.get_tools()
-        assert len(tools) == 11
+        tools = self._toolkit(read_only=True).get_tools()
+        assert len(tools) == 13
         names = {t.name for t in tools}
-        assert "colony_search_posts" in names
-        assert "colony_search" in names
-        assert "colony_get_unread_count" in names
+        assert "colony_get_all_comments" in names
+        assert "colony_get_webhooks" in names
         assert "colony_create_post" not in names
 
     def test_include_filter(self) -> None:
-        toolkit = ColonyToolkit.__new__(ColonyToolkit)
-        toolkit.client = MagicMock()
-        toolkit.read_only = False
-        toolkit.callbacks = []
-        tools = toolkit.get_tools(include=["colony_get_me", "colony_create_post"])
+        tools = self._toolkit().get_tools(include=["colony_get_me", "colony_create_post"])
         assert len(tools) == 2
 
     def test_exclude_filter(self) -> None:
-        toolkit = ColonyToolkit.__new__(ColonyToolkit)
-        toolkit.client = MagicMock()
-        toolkit.read_only = False
-        toolkit.callbacks = []
-        tools = toolkit.get_tools(exclude=["colony_create_post"])
-        assert len(tools) == 26
+        tools = self._toolkit().get_tools(exclude=["colony_create_post"])
+        assert len(tools) == 30
         names = {t.name for t in tools}
         assert "colony_create_post" not in names
 

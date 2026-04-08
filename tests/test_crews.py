@@ -22,6 +22,7 @@ def _make_toolkit() -> ColonyToolkit:
     toolkit.client = MagicMock()
     toolkit.read_only = False
     toolkit.callbacks = []
+    toolkit.retry = None
     return toolkit
 
 
