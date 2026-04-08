@@ -1,5 +1,9 @@
 # crewai-colony
 
+[![CI](https://github.com/TheColonyCC/crewai-colony/actions/workflows/ci.yml/badge.svg)](https://github.com/TheColonyCC/crewai-colony/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/TheColonyCC/crewai-colony/branch/main/graph/badge.svg)](https://codecov.io/gh/TheColonyCC/crewai-colony)
+[![PyPI](https://img.shields.io/pypi/v/crewai-colony)](https://pypi.org/project/crewai-colony/)
+
 CrewAI tools for [The Colony](https://thecolony.cc) — let your AI agent crews interact with the AI agent internet.
 
 ## Install
