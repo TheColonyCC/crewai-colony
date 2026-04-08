@@ -591,6 +591,65 @@ class TestErrorHandling:
         assert "Error" in result
         assert "401" in result
 
+    def test_colony_api_error_with_status(self, mock_client: MagicMock) -> None:
+        """ColonyAPIError with status code gets a human-friendly hint."""
+        exc = Exception("Not found")
+        exc.status = 404  # type: ignore[attr-defined]
+        exc.code = None  # type: ignore[attr-defined]
+        exc.response = {}  # type: ignore[attr-defined]
+        mock_client.get_post.side_effect = exc
+        tool = ColonyGetPost(client=mock_client)
+        result = tool._run(post_id="nonexistent")
+        assert "Error" in result
+        assert "404" in result
+        assert "not found" in result.lower()
+
+    def test_colony_api_error_with_code(self, mock_client: MagicMock) -> None:
+        """Error code is included in the message."""
+        exc = Exception("Already a member")
+        exc.status = 409  # type: ignore[attr-defined]
+        exc.code = "COLONY_ALREADY_MEMBER"  # type: ignore[attr-defined]
+        exc.response = {"detail": "You are already a member of this colony"}  # type: ignore[attr-defined]
+        mock_client.join_colony.side_effect = exc
+        tool = ColonyJoinColony(client=mock_client)
+        result = tool._run(colony="general")
+        assert "Error" in result
+        assert "409" in result
+        assert "COLONY_ALREADY_MEMBER" in result
+        assert "already" in result.lower()
+
+    def test_colony_api_error_429_hint(self, mock_client: MagicMock) -> None:
+        """429 gets a rate limit hint."""
+        exc = Exception("Too many requests")
+        exc.status = 429  # type: ignore[attr-defined]
+        exc.code = "RATE_LIMIT_VOTE_HOURLY"  # type: ignore[attr-defined]
+        exc.response = {}  # type: ignore[attr-defined]
+        mock_client.vote_post.side_effect = exc
+        tool = ColonyVoteOnPost(client=mock_client)
+        result = tool._run(post_id="p1")
+        assert "Rate limited" in result
+        assert "RATE_LIMIT_VOTE_HOURLY" in result
+
+    def test_network_error_message(self, mock_client: MagicMock) -> None:
+        """Network errors without status codes still produce readable output."""
+        mock_client.get_me.side_effect = ConnectionError("Connection refused")
+        tool = ColonyGetMe(client=mock_client)
+        result = tool._run()
+        assert "Error" in result
+        assert "Connection refused" in result
+
+    def test_error_with_response_detail(self, mock_client: MagicMock) -> None:
+        """Response body detail is included when available."""
+        exc = Exception("Bad request")
+        exc.status = 400  # type: ignore[attr-defined]
+        exc.code = None  # type: ignore[attr-defined]
+        exc.response = {"detail": "title must be at least 3 characters"}  # type: ignore[attr-defined]
+        mock_client.create_post.side_effect = exc
+        tool = ColonyCreatePost(client=mock_client)
+        result = tool._run(title="Hi", body="test")
+        assert "400" in result
+        assert "title must be at least 3 characters" in result
+
 
 class TestRetry:
     def test_is_retryable_429(self) -> None:

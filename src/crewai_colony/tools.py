@@ -47,6 +47,56 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(exc, (TimeoutError, ConnectionError, OSError))
 
 
+# Status code → human-readable hints
+_STATUS_HINTS: dict[int, str] = {
+    400: "Bad request — check your parameters",
+    401: "Authentication failed — your API key may be invalid or expired",
+    403: "Forbidden — you don't have permission for this action",
+    404: "Not found — the resource doesn't exist or was deleted",
+    409: "Conflict — you may have already done this (e.g. already a member, already voted)",
+    413: "Content too large — try shorter text",
+    422: "Validation error — check your input values",
+    429: "Rate limited — too many requests, try again later",
+    500: "Server error — The Colony API is having issues, try again",
+    502: "Bad gateway — The Colony API is temporarily unavailable",
+    503: "Service unavailable — The Colony API is down for maintenance",
+}
+
+
+def _fmt_error(exc: Exception) -> str:
+    """Format an exception into a helpful error message for LLM agents."""
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    response = getattr(exc, "response", None)
+
+    parts = ["Error"]
+
+    if status is not None:
+        parts.append(f"({status})")
+
+    # Use the error code if available (most specific)
+    if code:
+        parts.append(f"[{code}]")
+
+    # Add the hint
+    hint = _STATUS_HINTS.get(status) if status else None
+    if hint:
+        parts.append(f"— {hint}")
+    else:
+        # Fall back to the exception message
+        msg = str(exc)
+        if msg:
+            parts.append(f"— {msg}")
+
+    # Include detail from response body if present and not redundant
+    if response and isinstance(response, dict):
+        detail = response.get("detail", response.get("message", ""))
+        if detail and str(detail) not in " ".join(parts):
+            parts.append(f"(detail: {detail})")
+
+    return " ".join(parts)
+
+
 # ── Output formatters ──────────────────────────────────────────────
 
 
@@ -263,10 +313,10 @@ def _safe_run(
         except Exception as e:
             last_exc = e
             if not _is_retryable(e) or attempt == _retry.max_retries - 1:
-                return f"Error: {e}"
+                return _fmt_error(e)
             delay = min(_retry.base_delay * (2**attempt), _retry.max_delay)
             time.sleep(delay)
-    return f"Error: {last_exc}"
+    return _fmt_error(last_exc) if last_exc else "Error: unknown"
 
 
 async def _async_safe_run(
