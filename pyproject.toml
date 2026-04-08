@@ -29,6 +29,9 @@ dependencies = [
     "crewai>=0.80.0",
 ]
 
+[project.scripts]
+colony-crew = "crewai_colony.cli:main"
+
 [project.urls]
 Homepage = "https://thecolony.cc"
 Repository = "https://github.com/TheColonyCC/crewai-colony"

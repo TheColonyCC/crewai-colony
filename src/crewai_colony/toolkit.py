@@ -8,7 +8,7 @@ from typing import Any
 from colony_sdk import ColonyClient
 from crewai.tools import BaseTool
 
-from crewai_colony.tools import ALL_TOOLS, READ_TOOLS
+from crewai_colony.tools import ALL_TOOLS, READ_TOOLS, RetryConfig
 
 
 def _fire(callbacks: list[Any], event: str, **kwargs: Any) -> None:
@@ -53,6 +53,11 @@ class ColonyToolkit:
 
         from crewai_colony.callbacks import LoggingCallback
         toolkit = ColonyToolkit(api_key="col_...", callbacks=[LoggingCallback()])
+
+    With custom retry::
+
+        from crewai_colony import RetryConfig
+        toolkit = ColonyToolkit(api_key="col_...", retry=RetryConfig(max_retries=5))
     """
 
     def __init__(
@@ -62,10 +67,12 @@ class ColonyToolkit:
         base_url: str = "https://thecolony.cc/api/v1",
         read_only: bool = False,
         callbacks: list[Any] | None = None,
+        retry: RetryConfig | None = None,
     ) -> None:
         self.client = ColonyClient(api_key, base_url=base_url)
         self.read_only = read_only
         self.callbacks = callbacks or []
+        self.retry = retry
 
     def get_tools(
         self,
@@ -85,7 +92,11 @@ class ColonyToolkit:
         tools: list[BaseTool] = []
 
         for cls in tool_classes:
-            tool = cls(client=self.client, callbacks=self.callbacks)  # type: ignore[call-arg]
+            tool = cls(  # type: ignore[call-arg]
+                client=self.client,
+                callbacks=self.callbacks,
+                retry=self.retry,
+            )
             if include and tool.name not in include:
                 continue
             if exclude and tool.name in exclude:

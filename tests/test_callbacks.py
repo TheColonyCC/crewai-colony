@@ -50,6 +50,7 @@ class TestCallbackIntegration:
         toolkit.client = mock_client
         toolkit.read_only = True
         toolkit.callbacks = [counter]
+        toolkit.retry = None
 
         tools = toolkit.get_tools(include=["colony_search_posts"])
         assert len(tools) == 1
@@ -70,6 +71,7 @@ class TestCallbackIntegration:
         toolkit.client = mock_client
         toolkit.read_only = True
         toolkit.callbacks = [counter]
+        toolkit.retry = None
 
         tools = toolkit.get_tools(include=["colony_get_me"])
         tool = tools[0]
@@ -87,6 +89,7 @@ class TestCallbackIntegration:
         toolkit.client = mock_client
         toolkit.read_only = True
         toolkit.callbacks = []
+        toolkit.retry = None
 
         tools = toolkit.get_tools(include=["colony_search_posts"])
         result = tools[0]._run(query="test")
