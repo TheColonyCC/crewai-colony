@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from crewai_colony import ColonyToolkit
 from crewai_colony.crews import (
     create_community_agent,
+    create_engagement_crew,
+    create_newsletter_crew,
     create_research_crew,
     create_scout_agent,
     create_writer_agent,
@@ -105,3 +107,100 @@ class TestResearchCrew:
         assert mock_task_cls.call_count == 2
         # One crew created
         mock_crew_cls.assert_called_once()
+
+
+class TestEngagementCrew:
+    @patch("crewai_colony.crews.Crew")
+    @patch("crewai_colony.crews.Task")
+    @patch("crewai_colony.crews.Agent")
+    @patch("crewai_colony.crews.ColonyToolkit")
+    def test_creates_crew_with_finder_and_responder(
+        self,
+        mock_toolkit_cls: MagicMock,
+        mock_agent_cls: MagicMock,
+        mock_task_cls: MagicMock,
+        mock_crew_cls: MagicMock,
+    ) -> None:
+        mock_toolkit = MagicMock()
+        mock_toolkit.get_tools.return_value = []
+        mock_toolkit_cls.return_value = mock_toolkit
+
+        create_engagement_crew("col_test")
+
+        assert mock_agent_cls.call_count == 2
+        assert mock_task_cls.call_count == 2
+        mock_crew_cls.assert_called_once()
+
+        # Verify agents have correct roles
+        roles = [call[1]["role"] for call in mock_agent_cls.call_args_list]
+        assert "Question Finder" in roles
+        assert "Community Responder" in roles
+
+    @patch("crewai_colony.crews.Crew")
+    @patch("crewai_colony.crews.Task")
+    @patch("crewai_colony.crews.Agent")
+    @patch("crewai_colony.crews.ColonyToolkit")
+    def test_custom_colony(
+        self,
+        mock_toolkit_cls: MagicMock,
+        mock_agent_cls: MagicMock,
+        mock_task_cls: MagicMock,
+        mock_crew_cls: MagicMock,
+    ) -> None:
+        mock_toolkit = MagicMock()
+        mock_toolkit.get_tools.return_value = []
+        mock_toolkit_cls.return_value = mock_toolkit
+
+        create_engagement_crew("col_test", colony="general")
+
+        # Task description should mention the colony
+        task_desc = mock_task_cls.call_args_list[0][1]["description"]
+        assert "general" in task_desc
+
+
+class TestNewsletterCrew:
+    @patch("crewai_colony.crews.Crew")
+    @patch("crewai_colony.crews.Task")
+    @patch("crewai_colony.crews.Agent")
+    @patch("crewai_colony.crews.ColonyToolkit")
+    def test_creates_crew_with_curator_and_summarizer(
+        self,
+        mock_toolkit_cls: MagicMock,
+        mock_agent_cls: MagicMock,
+        mock_task_cls: MagicMock,
+        mock_crew_cls: MagicMock,
+    ) -> None:
+        mock_toolkit = MagicMock()
+        mock_toolkit.get_tools.return_value = []
+        mock_toolkit_cls.return_value = mock_toolkit
+
+        create_newsletter_crew("col_test")
+
+        assert mock_agent_cls.call_count == 2
+        assert mock_task_cls.call_count == 2
+        mock_crew_cls.assert_called_once()
+
+        roles = [call[1]["role"] for call in mock_agent_cls.call_args_list]
+        assert "Content Curator" in roles
+        assert "Newsletter Writer" in roles
+
+    @patch("crewai_colony.crews.Crew")
+    @patch("crewai_colony.crews.Task")
+    @patch("crewai_colony.crews.Agent")
+    @patch("crewai_colony.crews.ColonyToolkit")
+    def test_custom_period(
+        self,
+        mock_toolkit_cls: MagicMock,
+        mock_agent_cls: MagicMock,
+        mock_task_cls: MagicMock,
+        mock_crew_cls: MagicMock,
+    ) -> None:
+        mock_toolkit = MagicMock()
+        mock_toolkit.get_tools.return_value = []
+        mock_toolkit_cls.return_value = mock_toolkit
+
+        create_newsletter_crew("col_test", period="month")
+
+        # Both tasks should mention the period
+        for call in mock_task_cls.call_args_list:
+            assert "month" in call[1]["description"].lower()

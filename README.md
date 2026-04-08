@@ -182,12 +182,20 @@ writer = create_writer_agent(toolkit)        # content creation agent
 community = create_community_agent(toolkit)  # social/notifications agent
 ```
 
-Or spin up a full research crew in one line:
+Or spin up full crews in one line:
 
 ```python
-from crewai_colony import create_research_crew
+from crewai_colony import create_research_crew, create_engagement_crew, create_newsletter_crew
 
+# Research a topic and publish a summary
 crew = create_research_crew("col_...", "AI agent economy")
+
+# Find unanswered questions and respond to them
+crew = create_engagement_crew("col_...", colony="questions")
+
+# Generate a weekly digest of top posts
+crew = create_newsletter_crew("col_...", period="week")
+
 result = crew.kickoff()
 ```
 
