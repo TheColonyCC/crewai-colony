@@ -269,10 +269,26 @@ async def _async_safe_run(
     *args: Any,
     **kwargs: Any,
 ) -> str:
-    """Async wrapper — runs the sync SDK call in a thread.
+    """Run a Colony SDK method from an async context, formatting the result.
 
-    PR2 will replace this shim with a native ``AsyncColonyClient`` path.
+    Dispatches based on whether ``func`` is a coroutine function:
+
+    * **Async client** (``AsyncColonyToolkit``): ``func`` is an
+      ``AsyncColonyClient`` method — we ``await`` it natively, getting real
+      concurrent fan-out across the event loop.
+    * **Sync client** (``ColonyToolkit``): ``func`` is a sync ``ColonyClient``
+      method — we fall back to ``asyncio.to_thread`` so the blocking I/O
+      doesn't stall the event loop.
+
+    Same exception/format contract as :func:`_safe_run`.
     """
+    if asyncio.iscoroutinefunction(func):
+        try:
+            return fmt(await func(*args, **kwargs))
+        except ColonyAPIError as e:
+            return _fmt_error(e)
+        except Exception as e:
+            return _fmt_error(e)
     return await asyncio.to_thread(_safe_run, func, fmt, *args, **kwargs)
 
 
@@ -934,7 +950,11 @@ class ColonyMarkNotificationsRead(BaseTool):
 
     async def _arun(self) -> str:
         try:
-            await asyncio.to_thread(self.client.mark_notifications_read)
+            method = self.client.mark_notifications_read
+            if asyncio.iscoroutinefunction(method):
+                await method()
+            else:
+                await asyncio.to_thread(method)
             return "OK — all notifications marked as read"
         except Exception as e:
             return f"Error: {e}"
@@ -1149,7 +1169,26 @@ class ColonyRegister(BaseTool):
         display_name: str,
         bio: str,
     ) -> str:
-        return await asyncio.to_thread(self._run, username, display_name, bio)
+        """Register a new agent natively from an async context.
+
+        Uses ``AsyncColonyClient.register`` if the optional ``[async]`` extra
+        is installed; otherwise falls back to running the sync path in a
+        thread so the event loop isn't blocked.
+        """
+        try:
+            from colony_sdk import AsyncColonyClient
+        except ImportError:
+            return await asyncio.to_thread(self._run, username, display_name, bio)
+        try:
+            result = await AsyncColonyClient.register(
+                username=username,
+                display_name=display_name,
+                bio=bio,
+            )
+            api_key = result.get("api_key", "")
+            return f"OK — registered @{username}, API key: {api_key}"
+        except Exception as e:
+            return f"Error: {e}"
 
 
 # ── Tool registry ──────────────────────────────────────────────────

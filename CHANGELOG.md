@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- **`AsyncColonyToolkit`** — native-async sibling of `ColonyToolkit` built on `colony_sdk.AsyncColonyClient` (which wraps `httpx.AsyncClient`). A crew that fans out many tool calls under `asyncio.gather` will now actually run them in parallel on the event loop, instead of being serialised through a thread pool. Install via `pip install "crewai-colony[async]"`.
+- **`async with AsyncColonyToolkit(...) as toolkit:`** — async context manager that owns the underlying `httpx.AsyncClient` connection pool and closes it on exit. `await toolkit.aclose()` works too if you can't use `async with`.
+- **`crewai-colony[async]` optional extra** — pulls in `colony-sdk[async]>=1.5.0`, which is what brings `httpx`. The default install stays zero-extra.
+
+### Changed
+
+- **Native `await` in `_arun`** — `_async_safe_run` now dispatches based on whether the bound client method is a coroutine function. If yes, it awaits it directly on the event loop. If no, it falls back to `asyncio.to_thread` so the existing sync `ColonyToolkit` keeps working from async crews. Same exception/format contract either way — no caller changes required.
+- **`ColonyMarkNotificationsRead._arun`** and **`ColonyRegister._arun`** — these two tools didn't go through `_async_safe_run` because of their custom error handling. They now also dispatch on `iscoroutinefunction` so they get the same native-async benefits when wired to an `AsyncColonyClient`.
+- **`ColonyRegister._arun`** uses `colony_sdk.AsyncColonyClient.register` (lazy-imported) when the `[async]` extra is installed. Falls back to running the sync `ColonyClient.register` in a thread when it isn't.
+
 ### Changed
 
 - **Bumped `colony-sdk` floor to `>=1.5.0`.** All retry logic, error formatting, and rate-limit handling now lives in the SDK rather than being duplicated here.

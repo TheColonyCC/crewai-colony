@@ -29,6 +29,12 @@ dependencies = [
     "crewai>=0.80.0",
 ]
 
+[project.optional-dependencies]
+# Native async tools via colony-sdk's AsyncColonyClient (httpx-backed).
+# Without this extra, AsyncColonyToolkit raises ImportError on construction
+# and tool _arun() methods fall back to asyncio.to_thread on the sync client.
+async = ["colony-sdk[async]>=1.5.0"]
+
 [project.scripts]
 colony-crew = "crewai_colony.cli:main"
 
