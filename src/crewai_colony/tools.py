@@ -3,97 +3,40 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import time
 from typing import Any
 
-from colony_sdk import ColonyClient
+from colony_sdk import ColonyAPIError, ColonyClient
+from colony_sdk import RetryConfig as RetryConfig  # re-export for crewai_colony.tools.RetryConfig
 from crewai.tools import BaseTool
 
-# ── Retry logic ────────────────────────────────────────────────────
-
-_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
-
-
-@dataclasses.dataclass(frozen=True)
-class RetryConfig:
-    """Configuration for retry behaviour on transient failures.
-
-    Example::
-
-        from crewai_colony import ColonyToolkit, RetryConfig
-
-        toolkit = ColonyToolkit(
-            api_key="col_...",
-            retry=RetryConfig(max_retries=5, base_delay=0.5),
-        )
-    """
-
-    max_retries: int = 3
-    base_delay: float = 1.0
-    max_delay: float = 10.0
+# ``RetryConfig`` is re-exported from ``colony_sdk`` so callers can keep
+# importing it from ``crewai_colony``. Retry semantics (max_retries, backoff,
+# Retry-After handling, which status codes are retried) live in the SDK.
 
 
-_DEFAULT_RETRY = RetryConfig()
+# ── Error formatting ───────────────────────────────────────────────
 
-
-def _is_retryable(exc: Exception) -> bool:
-    """Check if an exception is transient and worth retrying."""
-    # ColonyAPIError has a .status attribute
-    status = getattr(exc, "status", None)
-    if status is not None and status in _RETRYABLE_STATUSES:
-        return True
-    # Network errors
-    return isinstance(exc, (TimeoutError, ConnectionError, OSError))
-
-
-# Status code → human-readable hints
-_STATUS_HINTS: dict[int, str] = {
-    400: "Bad request — check your parameters",
-    401: "Authentication failed — your API key may be invalid or expired",
-    403: "Forbidden — you don't have permission for this action",
-    404: "Not found — the resource doesn't exist or was deleted",
-    409: "Conflict — you may have already done this (e.g. already a member, already voted)",
-    413: "Content too large — try shorter text",
-    422: "Validation error — check your input values",
-    429: "Rate limited — too many requests, try again later",
-    500: "Server error — The Colony API is having issues, try again",
-    502: "Bad gateway — The Colony API is temporarily unavailable",
-    503: "Service unavailable — The Colony API is down for maintenance",
-}
+# The SDK's typed exceptions already include a human-readable hint and the
+# server's ``detail`` field in their string representation, e.g.::
+#
+#     ColonyNotFoundError: get_post failed: post not found
+#         (not found — the resource doesn't exist or has been deleted)
+#
+# So all this layer needs to do is prepend ``Error`` and surface the status
+# code / error code so LLM agents have something easy to grep on.
 
 
 def _fmt_error(exc: Exception) -> str:
     """Format an exception into a helpful error message for LLM agents."""
     status = getattr(exc, "status", None)
     code = getattr(exc, "code", None)
-    response = getattr(exc, "response", None)
 
     parts = ["Error"]
-
-    if status is not None:
+    if status:  # 0 means "no HTTP response" (network error) — skip
         parts.append(f"({status})")
-
-    # Use the error code if available (most specific)
     if code:
         parts.append(f"[{code}]")
-
-    # Add the hint
-    hint = _STATUS_HINTS.get(status) if status else None
-    if hint:
-        parts.append(f"— {hint}")
-    else:
-        # Fall back to the exception message
-        msg = str(exc)
-        if msg:
-            parts.append(f"— {msg}")
-
-    # Include detail from response body if present and not redundant
-    if response and isinstance(response, dict):
-        detail = response.get("detail", response.get("message", ""))
-        if detail and str(detail) not in " ".join(parts):
-            parts.append(f"(detail: {detail})")
-
+    parts.append(f"— {exc}")
     return " ".join(parts)
 
 
@@ -301,33 +244,36 @@ def _safe_run(
     func: Any,
     fmt: Any = _fmt_simple,
     *args: Any,
-    _retry: RetryConfig = _DEFAULT_RETRY,
     **kwargs: Any,
 ) -> str:
-    """Call a Colony SDK method with retry, format the result."""
-    last_exc: Exception | None = None
-    for attempt in range(_retry.max_retries):
-        try:
-            result = func(*args, **kwargs)
-            return fmt(result)
-        except Exception as e:
-            last_exc = e
-            if not _is_retryable(e) or attempt == _retry.max_retries - 1:
-                return _fmt_error(e)
-            delay = min(_retry.base_delay * (2**attempt), _retry.max_delay)
-            time.sleep(delay)
-    return _fmt_error(last_exc) if last_exc else "Error: unknown"
+    """Call a Colony SDK method, format the result, and turn errors into LLM-friendly strings.
+
+    Retries (429, 502, 503, 504, with exponential backoff and ``Retry-After``
+    handling) are performed inside the SDK itself — see ``ColonyClient(retry=...)``.
+    This wrapper just catches whatever the SDK ultimately raises.
+    """
+    try:
+        return fmt(func(*args, **kwargs))
+    except ColonyAPIError as e:
+        return _fmt_error(e)
+    except Exception as e:
+        # Last-resort safety net for the crew tool boundary — anything that
+        # escapes the SDK's typed error layer still gets formatted instead of
+        # crashing the crew run.
+        return _fmt_error(e)
 
 
 async def _async_safe_run(
     func: Any,
     fmt: Any = _fmt_simple,
     *args: Any,
-    _retry: RetryConfig = _DEFAULT_RETRY,
     **kwargs: Any,
 ) -> str:
-    """Async wrapper — runs the sync SDK call in a thread."""
-    return await asyncio.to_thread(_safe_run, func, fmt, *args, _retry=_retry, **kwargs)
+    """Async wrapper — runs the sync SDK call in a thread.
+
+    PR2 will replace this shim with a native ``AsyncColonyClient`` path.
+    """
+    return await asyncio.to_thread(_safe_run, func, fmt, *args, **kwargs)
 
 
 # ── Read-only tools ────────────────────────────────────────────────
@@ -345,7 +291,6 @@ class ColonySearchPosts(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(
         self,
@@ -362,7 +307,6 @@ class ColonySearchPosts(BaseTool):
             sort=sort,
             limit=limit,
             search=query or None,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(
@@ -379,7 +323,6 @@ class ColonySearchPosts(BaseTool):
             sort=sort,
             limit=limit,
             search=query or None,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -394,11 +337,10 @@ class ColonySearch(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, query: str, limit: int = 20) -> str:
         """Search for posts matching the query."""
-        return _safe_run(self.client.search, _fmt_search, query, limit=limit, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.search, _fmt_search, query, limit=limit)
 
     async def _arun(self, query: str, limit: int = 20) -> str:
         return await _async_safe_run(
@@ -406,7 +348,6 @@ class ColonySearch(BaseTool):
             _fmt_search,
             query,
             limit=limit,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -420,18 +361,16 @@ class ColonyGetPost(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str) -> str:
         """Get a post by its ID."""
-        return _safe_run(self.client.get_post, _fmt_post_detail, post_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_post, _fmt_post_detail, post_id)
 
     async def _arun(self, post_id: str) -> str:
         return await _async_safe_run(
             self.client.get_post,
             _fmt_post_detail,
             post_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -446,7 +385,6 @@ class ColonyGetComments(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str, page: int = 1) -> str:
         """Get comments on a post. 20 per page."""
@@ -455,7 +393,6 @@ class ColonyGetComments(BaseTool):
             _fmt_comments,
             post_id,
             page=page,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, post_id: str, page: int = 1) -> str:
@@ -464,7 +401,6 @@ class ColonyGetComments(BaseTool):
             _fmt_comments,
             post_id,
             page=page,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -475,14 +411,13 @@ class ColonyGetMe(BaseTool):
     description: str = "Get your own profile on The Colony, including username, bio, karma, and stats."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self) -> str:
         """Get your profile."""
-        return _safe_run(self.client.get_me, _fmt_user, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_me, _fmt_user)
 
     async def _arun(self) -> str:
-        return await _async_safe_run(self.client.get_me, _fmt_user, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.get_me, _fmt_user)
 
 
 class ColonyGetUser(BaseTool):
@@ -495,14 +430,13 @@ class ColonyGetUser(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, user_id: str) -> str:
         """Get a user's profile by ID."""
-        return _safe_run(self.client.get_user, _fmt_user, user_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_user, _fmt_user, user_id)
 
     async def _arun(self, user_id: str) -> str:
-        return await _async_safe_run(self.client.get_user, _fmt_user, user_id, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.get_user, _fmt_user, user_id)
 
 
 class ColonyListColonies(BaseTool):
@@ -515,18 +449,16 @@ class ColonyListColonies(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, limit: int = 50) -> str:
         """List colonies."""
-        return _safe_run(self.client.get_colonies, _fmt_colonies, limit=limit, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_colonies, _fmt_colonies, limit=limit)
 
     async def _arun(self, limit: int = 50) -> str:
         return await _async_safe_run(
             self.client.get_colonies,
             _fmt_colonies,
             limit=limit,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -540,18 +472,16 @@ class ColonyGetConversation(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, username: str) -> str:
         """Get DM history with a user by their username."""
-        return _safe_run(self.client.get_conversation, _fmt_conversation, username, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_conversation, _fmt_conversation, username)
 
     async def _arun(self, username: str) -> str:
         return await _async_safe_run(
             self.client.get_conversation,
             _fmt_conversation,
             username,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -565,7 +495,6 @@ class ColonyGetNotifications(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, unread_only: bool = True) -> str:
         """Get notifications. Set unread_only=False to see all."""
@@ -573,7 +502,6 @@ class ColonyGetNotifications(BaseTool):
             self.client.get_notifications,
             _fmt_notifications,
             unread_only=unread_only,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, unread_only: bool = True) -> str:
@@ -581,7 +509,6 @@ class ColonyGetNotifications(BaseTool):
             self.client.get_notifications,
             _fmt_notifications,
             unread_only=unread_only,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -595,14 +522,13 @@ class ColonyGetPoll(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str) -> str:
         """Get poll results for a post."""
-        return _safe_run(self.client.get_poll, _fmt_poll, post_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_poll, _fmt_poll, post_id)
 
     async def _arun(self, post_id: str) -> str:
-        return await _async_safe_run(self.client.get_poll, _fmt_poll, post_id, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.get_poll, _fmt_poll, post_id)
 
 
 class ColonyGetUnreadCount(BaseTool):
@@ -612,14 +538,13 @@ class ColonyGetUnreadCount(BaseTool):
     description: str = "Get the number of unread direct messages on The Colony."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self) -> str:
         """Get unread DM count."""
-        return _safe_run(self.client.get_unread_count, _fmt_unread, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.get_unread_count, _fmt_unread)
 
     async def _arun(self) -> str:
-        return await _async_safe_run(self.client.get_unread_count, _fmt_unread, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.get_unread_count, _fmt_unread)
 
 
 # ── Write tools ────────────────────────────────────────────────────
@@ -637,7 +562,6 @@ class ColonyCreatePost(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(
         self,
@@ -654,7 +578,6 @@ class ColonyCreatePost(BaseTool):
             body=body,
             colony=colony,
             post_type=post_type,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(
@@ -671,7 +594,6 @@ class ColonyCreatePost(BaseTool):
             body=body,
             colony=colony,
             post_type=post_type,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -685,7 +607,6 @@ class ColonyUpdatePost(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(
         self,
@@ -701,7 +622,7 @@ class ColonyUpdatePost(BaseTool):
             kwargs["body"] = body
         if not kwargs:
             return "Error: provide at least one of title or body"
-        return _safe_run(self.client.update_post, _fmt_simple, post_id, **kwargs, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.update_post, _fmt_simple, post_id, **kwargs)
 
     async def _arun(
         self,
@@ -721,7 +642,6 @@ class ColonyUpdatePost(BaseTool):
             _fmt_simple,
             post_id,
             **kwargs,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -732,14 +652,13 @@ class ColonyDeletePost(BaseTool):
     description: str = "Permanently delete one of your posts on The Colony. This cannot be undone."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str) -> str:
         """Delete a post by ID."""
-        return _safe_run(self.client.delete_post, _fmt_simple, post_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.delete_post, _fmt_simple, post_id)
 
     async def _arun(self, post_id: str) -> str:
-        return await _async_safe_run(self.client.delete_post, _fmt_simple, post_id, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.delete_post, _fmt_simple, post_id)
 
 
 class ColonyCommentOnPost(BaseTool):
@@ -752,7 +671,6 @@ class ColonyCommentOnPost(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str, body: str, parent_id: str | None = None) -> str:
         """Comment on a post. Use parent_id to reply to a specific comment."""
@@ -762,7 +680,6 @@ class ColonyCommentOnPost(BaseTool):
             post_id,
             body,
             parent_id=parent_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, post_id: str, body: str, parent_id: str | None = None) -> str:
@@ -772,7 +689,6 @@ class ColonyCommentOnPost(BaseTool):
             post_id,
             body,
             parent_id=parent_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -783,11 +699,10 @@ class ColonyVoteOnPost(BaseTool):
     description: str = "Upvote or downvote a post on The Colony. value=1 for upvote (default), value=-1 for downvote."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str, value: int = 1) -> str:
         """Vote on a post. value=1 for upvote, value=-1 for downvote."""
-        return _safe_run(self.client.vote_post, _fmt_simple, post_id, value=value, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.vote_post, _fmt_simple, post_id, value=value)
 
     async def _arun(self, post_id: str, value: int = 1) -> str:
         return await _async_safe_run(
@@ -795,7 +710,6 @@ class ColonyVoteOnPost(BaseTool):
             _fmt_simple,
             post_id,
             value=value,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -808,7 +722,6 @@ class ColonyVoteOnComment(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, comment_id: str, value: int = 1) -> str:
         """Vote on a comment. value=1 for upvote, value=-1 for downvote."""
@@ -817,7 +730,6 @@ class ColonyVoteOnComment(BaseTool):
             _fmt_simple,
             comment_id,
             value=value,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, comment_id: str, value: int = 1) -> str:
@@ -826,7 +738,6 @@ class ColonyVoteOnComment(BaseTool):
             _fmt_simple,
             comment_id,
             value=value,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -840,11 +751,10 @@ class ColonySendMessage(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, username: str, body: str) -> str:
         """Send a DM to another agent by username."""
-        return _safe_run(self.client.send_message, _fmt_simple, username, body, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.send_message, _fmt_simple, username, body)
 
     async def _arun(self, username: str, body: str) -> str:
         return await _async_safe_run(
@@ -852,7 +762,6 @@ class ColonySendMessage(BaseTool):
             _fmt_simple,
             username,
             body,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -865,14 +774,13 @@ class ColonyFollowUser(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, user_id: str) -> str:
         """Follow a user by their ID."""
-        return _safe_run(self.client.follow, _fmt_simple, user_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.follow, _fmt_simple, user_id)
 
     async def _arun(self, user_id: str) -> str:
-        return await _async_safe_run(self.client.follow, _fmt_simple, user_id, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.follow, _fmt_simple, user_id)
 
 
 class ColonyUnfollowUser(BaseTool):
@@ -882,14 +790,13 @@ class ColonyUnfollowUser(BaseTool):
     description: str = "Unfollow an agent on The Colony by their user ID (UUID)."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, user_id: str) -> str:
         """Unfollow a user by their ID."""
-        return _safe_run(self.client.unfollow, _fmt_simple, user_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.unfollow, _fmt_simple, user_id)
 
     async def _arun(self, user_id: str) -> str:
-        return await _async_safe_run(self.client.unfollow, _fmt_simple, user_id, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.unfollow, _fmt_simple, user_id)
 
 
 class ColonyUpdateProfile(BaseTool):
@@ -902,7 +809,6 @@ class ColonyUpdateProfile(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(
         self,
@@ -917,7 +823,7 @@ class ColonyUpdateProfile(BaseTool):
             fields["bio"] = bio
         if not fields:
             return "Error: provide at least one field to update (display_name, bio)"
-        return _safe_run(self.client.update_profile, _fmt_simple, **fields, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.update_profile, _fmt_simple, **fields)
 
     async def _arun(
         self,
@@ -935,7 +841,6 @@ class ColonyUpdateProfile(BaseTool):
             self.client.update_profile,
             _fmt_simple,
             **fields,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -949,11 +854,10 @@ class ColonyReactToPost(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str, emoji: str) -> str:
         """React to a post with an emoji (e.g. 'fire', 'heart', 'thumbsup')."""
-        return _safe_run(self.client.react_post, _fmt_simple, post_id, emoji, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.react_post, _fmt_simple, post_id, emoji)
 
     async def _arun(self, post_id: str, emoji: str) -> str:
         return await _async_safe_run(
@@ -961,7 +865,6 @@ class ColonyReactToPost(BaseTool):
             _fmt_simple,
             post_id,
             emoji,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -975,11 +878,10 @@ class ColonyReactToComment(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, comment_id: str, emoji: str) -> str:
         """React to a comment with an emoji."""
-        return _safe_run(self.client.react_comment, _fmt_simple, comment_id, emoji, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.react_comment, _fmt_simple, comment_id, emoji)
 
     async def _arun(self, comment_id: str, emoji: str) -> str:
         return await _async_safe_run(
@@ -987,7 +889,6 @@ class ColonyReactToComment(BaseTool):
             _fmt_simple,
             comment_id,
             emoji,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -1001,11 +902,10 @@ class ColonyVotePoll(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str, option_id: str) -> str:
         """Vote on a poll option."""
-        return _safe_run(self.client.vote_poll, _fmt_simple, post_id, option_id, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.vote_poll, _fmt_simple, post_id, option_id)
 
     async def _arun(self, post_id: str, option_id: str) -> str:
         return await _async_safe_run(
@@ -1013,7 +913,6 @@ class ColonyVotePoll(BaseTool):
             _fmt_simple,
             post_id,
             option_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -1024,7 +923,6 @@ class ColonyMarkNotificationsRead(BaseTool):
     description: str = "Mark all your notifications on The Colony as read."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self) -> str:
         """Mark all notifications as read."""
@@ -1051,14 +949,13 @@ class ColonyJoinColony(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, colony: str) -> str:
         """Join a colony by name (e.g. 'findings') or UUID."""
-        return _safe_run(self.client.join_colony, _fmt_simple, colony, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.join_colony, _fmt_simple, colony)
 
     async def _arun(self, colony: str) -> str:
-        return await _async_safe_run(self.client.join_colony, _fmt_simple, colony, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.join_colony, _fmt_simple, colony)
 
 
 class ColonyLeaveColony(BaseTool):
@@ -1068,14 +965,13 @@ class ColonyLeaveColony(BaseTool):
     description: str = "Leave a colony (sub-community) on The Colony. Pass the colony name or UUID."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, colony: str) -> str:
         """Leave a colony by name or UUID."""
-        return _safe_run(self.client.leave_colony, _fmt_simple, colony, _retry=self.retry or _DEFAULT_RETRY)
+        return _safe_run(self.client.leave_colony, _fmt_simple, colony)
 
     async def _arun(self, colony: str) -> str:
-        return await _async_safe_run(self.client.leave_colony, _fmt_simple, colony, _retry=self.retry or _DEFAULT_RETRY)
+        return await _async_safe_run(self.client.leave_colony, _fmt_simple, colony)
 
 
 # ── Auto-paginating tools ──────────────────────────────────────────
@@ -1092,7 +988,6 @@ class ColonyGetAllComments(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, post_id: str) -> str:
         """Get all comments on a post."""
@@ -1100,7 +995,6 @@ class ColonyGetAllComments(BaseTool):
             self.client.get_all_comments,
             _fmt_comments,
             post_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, post_id: str) -> str:
@@ -1108,7 +1002,6 @@ class ColonyGetAllComments(BaseTool):
             self.client.get_all_comments,
             _fmt_comments,
             post_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -1146,7 +1039,6 @@ class ColonyCreateWebhook(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, url: str, events: str, secret: str) -> str:
         """Create a webhook. events is a comma-separated list (e.g. 'post_created,comment_created')."""
@@ -1157,7 +1049,6 @@ class ColonyCreateWebhook(BaseTool):
             url,
             event_list,
             secret,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, url: str, events: str, secret: str) -> str:
@@ -1168,7 +1059,6 @@ class ColonyCreateWebhook(BaseTool):
             url,
             event_list,
             secret,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -1179,21 +1069,18 @@ class ColonyGetWebhooks(BaseTool):
     description: str = "List all webhooks you have registered on The Colony."
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self) -> str:
         """List webhooks."""
         return _safe_run(
             self.client.get_webhooks,
             _fmt_webhooks,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self) -> str:
         return await _async_safe_run(
             self.client.get_webhooks,
             _fmt_webhooks,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -1206,7 +1093,6 @@ class ColonyDeleteWebhook(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(self, webhook_id: str) -> str:
         """Delete a webhook by ID."""
@@ -1214,7 +1100,6 @@ class ColonyDeleteWebhook(BaseTool):
             self.client.delete_webhook,
             _fmt_simple,
             webhook_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
     async def _arun(self, webhook_id: str) -> str:
@@ -1222,7 +1107,6 @@ class ColonyDeleteWebhook(BaseTool):
             self.client.delete_webhook,
             _fmt_simple,
             webhook_id,
-            _retry=self.retry or _DEFAULT_RETRY,
         )
 
 
@@ -1240,7 +1124,6 @@ class ColonyRegister(BaseTool):
     )
     client: Any = None
     callbacks: Any = None
-    retry: Any = None
 
     def _run(
         self,

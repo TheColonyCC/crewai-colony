@@ -5,10 +5,10 @@ from __future__ import annotations
 import functools
 from typing import Any
 
-from colony_sdk import ColonyClient
+from colony_sdk import ColonyClient, RetryConfig
 from crewai.tools import BaseTool
 
-from crewai_colony.tools import ALL_TOOLS, READ_TOOLS, RetryConfig
+from crewai_colony.tools import ALL_TOOLS, READ_TOOLS
 
 
 def _fire(callbacks: list[Any], event: str, **kwargs: Any) -> None:
@@ -69,7 +69,13 @@ class ColonyToolkit:
         callbacks: list[Any] | None = None,
         retry: RetryConfig | None = None,
     ) -> None:
-        self.client = ColonyClient(api_key, base_url=base_url)
+        # Retry policy (max attempts, backoff, Retry-After handling, which
+        # status codes to retry on) is enforced inside the SDK client itself —
+        # we just hand it through at construction time.
+        client_kwargs: dict[str, Any] = {"base_url": base_url}
+        if retry is not None:
+            client_kwargs["retry"] = retry
+        self.client = ColonyClient(api_key, **client_kwargs)
         self.read_only = read_only
         self.callbacks = callbacks or []
         self.retry = retry
@@ -95,7 +101,6 @@ class ColonyToolkit:
             tool = cls(  # type: ignore[call-arg]
                 client=self.client,
                 callbacks=self.callbacks,
-                retry=self.retry,
             )
             if include and tool.name not in include:
                 continue

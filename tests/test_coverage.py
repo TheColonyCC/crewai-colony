@@ -219,13 +219,23 @@ class TestFmtWebhooksEdgeCases:
 
 
 class TestSafeRunEdgeCases:
-    def test_exhausted_retries_returns_error(self) -> None:
-        """Line 319: last_exc is None edge case (should never happen but covered)."""
-        from crewai_colony.tools import RetryConfig, _safe_run
+    def test_safe_run_passes_result_through(self) -> None:
+        from crewai_colony.tools import _safe_run
 
-        config = RetryConfig(max_retries=0)
-        result = _safe_run(lambda: None, _fmt_simple, _retry=config)
+        result = _safe_run(lambda: {"status": "ok"}, _fmt_simple)
+        assert "OK" in result
+
+    def test_safe_run_catches_non_sdk_exception(self) -> None:
+        """Last-resort safety net: anything that escapes SDK error types
+        still gets caught at the tool boundary instead of crashing the crew."""
+        from crewai_colony.tools import _safe_run
+
+        def boom() -> None:
+            raise ValueError("unexpected")
+
+        result = _safe_run(boom, _fmt_simple)
         assert "Error" in result
+        assert "unexpected" in result
 
 
 # ── _fmt_error edge cases ─────────────────────────────────────────
@@ -233,20 +243,29 @@ class TestSafeRunEdgeCases:
 
 class TestFmtErrorEdgeCases:
     def test_plain_exception(self) -> None:
-        """Exception without status/code/response."""
+        """Exception without status/code."""
         result = _fmt_error(Exception("something broke"))
         assert "Error" in result
         assert "something broke" in result
 
-    def test_unknown_status(self) -> None:
-        """Status code not in hints dict."""
-        exc = Exception("Teapot")
-        exc.status = 418  # type: ignore[attr-defined]
-        exc.code = None  # type: ignore[attr-defined]
-        exc.response = {}  # type: ignore[attr-defined]
+    def test_status_only(self) -> None:
+        """SDK exception with status but no error code."""
+        from colony_sdk import ColonyAPIError
+
+        exc = ColonyAPIError("teapot", status=418)
         result = _fmt_error(exc)
         assert "418" in result
-        assert "Teapot" in result
+        assert "teapot" in result
+
+    def test_status_zero_suppressed(self) -> None:
+        """Network errors carry status=0 — that's an internal sentinel,
+        not a real HTTP code. Don't surface a misleading ``(0)`` to LLMs."""
+        from colony_sdk import ColonyNetworkError
+
+        exc = ColonyNetworkError("connection refused", status=0, response={})
+        result = _fmt_error(exc)
+        assert "(0)" not in result
+        assert "connection refused" in result
 
 
 # ── Tool edge cases ───────────────────────────────────────────────
@@ -338,10 +357,11 @@ class TestToolkitInit:
     def test_constructor_with_options(self) -> None:
         from unittest.mock import patch
 
-        from crewai_colony.callbacks import CounterCallback
-        from crewai_colony.tools import RetryConfig
+        from colony_sdk import RetryConfig
 
-        with patch("crewai_colony.toolkit.ColonyClient"):
+        from crewai_colony.callbacks import CounterCallback
+
+        with patch("crewai_colony.toolkit.ColonyClient") as mock_cls:
             counter = CounterCallback()
             retry = RetryConfig(max_retries=5)
             toolkit = ColonyToolkit(
@@ -353,6 +373,8 @@ class TestToolkitInit:
             assert toolkit.read_only is True
             assert len(toolkit.callbacks) == 1
             assert toolkit.retry.max_retries == 5
+            # Retry is now enforced inside the SDK, so it must reach the client.
+            assert mock_cls.call_args.kwargs["retry"] is retry
 
 
 # ── Callback wrapper edge case ─────────────────────────────────────

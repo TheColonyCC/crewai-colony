@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from colony_sdk import (
+    ColonyAuthError,
+    ColonyConflictError,
+    ColonyNetworkError,
+    ColonyNotFoundError,
+    ColonyRateLimitError,
+    ColonyValidationError,
+)
 
 from crewai_colony import (
     ColonyCommentOnPost,
@@ -47,7 +55,6 @@ from crewai_colony import (
     ColonyVotePoll,
     RetryConfig,
 )
-from crewai_colony.tools import _is_retryable, _safe_run
 
 
 @pytest.fixture
@@ -550,66 +557,77 @@ class TestDeleteWebhook:
 
 
 class TestRetryConfig:
-    @patch("crewai_colony.tools.time.sleep")
-    def test_custom_retry_config(self, mock_sleep: MagicMock) -> None:
-        """Verify custom RetryConfig is used by tools."""
-        exc = Exception("rate limited")
-        exc.status = 429  # type: ignore[attr-defined]
-        call_count = 0
+    """``RetryConfig`` is now re-exported straight from ``colony_sdk`` —
+    the SDK enforces the policy inside ``ColonyClient``."""
 
-        def flaky(*args: Any, **kwargs: Any) -> dict[str, str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count < 2:
-                raise exc
-            return {"status": "ok"}
+    def test_retry_config_is_sdk_class(self) -> None:
+        from colony_sdk import RetryConfig as SdkRetryConfig
 
-        from crewai_colony.tools import _fmt_simple
-
-        config = RetryConfig(max_retries=5, base_delay=0.1, max_delay=1.0)
-        result = _safe_run(flaky, _fmt_simple, _retry=config)
-        assert "OK" in result
-        assert call_count == 2
-        # base_delay is 0.1 so first sleep should be 0.1
-        mock_sleep.assert_called_once_with(0.1)
+        assert RetryConfig is SdkRetryConfig
 
     def test_retry_config_defaults(self) -> None:
         config = RetryConfig()
-        assert config.max_retries == 3
+        # SDK defaults: 2 retries (3 total attempts), 1s base, 10s cap,
+        # retries on 429 + 5xx gateway errors.
+        assert config.max_retries == 2
         assert config.base_delay == 1.0
         assert config.max_delay == 10.0
+        assert 429 in config.retry_on
+        assert 502 in config.retry_on
+
+    def test_toolkit_passes_retry_to_client(self) -> None:
+        """The toolkit must hand the RetryConfig down to ColonyClient,
+        because retry semantics now live in the SDK rather than this layer."""
+        with patch("crewai_colony.toolkit.ColonyClient") as mock_cls:
+            retry = RetryConfig(max_retries=5, base_delay=0.1)
+            ColonyToolkit(api_key="col_test", retry=retry)
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["retry"] is retry
+
+    def test_toolkit_omits_retry_when_unset(self) -> None:
+        """When the caller doesn't specify retry, we don't override the
+        SDK's default — we just don't pass the kwarg."""
+        with patch("crewai_colony.toolkit.ColonyClient") as mock_cls:
+            ColonyToolkit(api_key="col_test")
+            kwargs = mock_cls.call_args.kwargs
+            assert "retry" not in kwargs
 
 
-# ── Error handling & retry ─────────────────────────────────────────
+# ── Error handling ─────────────────────────────────────────────────
 
 
 class TestErrorHandling:
-    def test_api_error_returns_string(self, mock_client: MagicMock) -> None:
+    """The SDK's typed exceptions already include hint + detail in their
+    string form (e.g. ``get_post failed: post not found (not found — the
+    resource doesn't exist or has been deleted)``). The tool layer just
+    prepends ``Error (status) [code]``."""
+
+    def test_plain_exception_returns_string(self, mock_client: MagicMock) -> None:
         mock_client.get_me.side_effect = Exception("401 Unauthorized")
         tool = ColonyGetMe(client=mock_client)
         result = tool._run()
         assert "Error" in result
         assert "401" in result
 
-    def test_colony_api_error_with_status(self, mock_client: MagicMock) -> None:
-        """ColonyAPIError with status code gets a human-friendly hint."""
-        exc = Exception("Not found")
-        exc.status = 404  # type: ignore[attr-defined]
-        exc.code = None  # type: ignore[attr-defined]
-        exc.response = {}  # type: ignore[attr-defined]
-        mock_client.get_post.side_effect = exc
+    def test_not_found_error(self, mock_client: MagicMock) -> None:
+        """ColonyNotFoundError carries the SDK hint inside its message."""
+        mock_client.get_post.side_effect = ColonyNotFoundError(
+            "get_post failed: post not found (not found — the resource doesn't exist or has been deleted)",
+            status=404,
+        )
         tool = ColonyGetPost(client=mock_client)
         result = tool._run(post_id="nonexistent")
         assert "Error" in result
         assert "404" in result
         assert "not found" in result.lower()
 
-    def test_colony_api_error_with_code(self, mock_client: MagicMock) -> None:
-        """Error code is included in the message."""
-        exc = Exception("Already a member")
-        exc.status = 409  # type: ignore[attr-defined]
-        exc.code = "COLONY_ALREADY_MEMBER"  # type: ignore[attr-defined]
-        exc.response = {"detail": "You are already a member of this colony"}  # type: ignore[attr-defined]
+    def test_conflict_error_with_code(self, mock_client: MagicMock) -> None:
+        """``code`` attribute on ColonyAPIError surfaces in [brackets]."""
+        exc = ColonyConflictError(
+            "join_colony failed: already a member (conflict — already done, or state mismatch)",
+            status=409,
+            code="COLONY_ALREADY_MEMBER",
+        )
         mock_client.join_colony.side_effect = exc
         tool = ColonyJoinColony(client=mock_client)
         result = tool._run(colony="general")
@@ -618,111 +636,66 @@ class TestErrorHandling:
         assert "COLONY_ALREADY_MEMBER" in result
         assert "already" in result.lower()
 
-    def test_colony_api_error_429_hint(self, mock_client: MagicMock) -> None:
-        """429 gets a rate limit hint."""
-        exc = Exception("Too many requests")
-        exc.status = 429  # type: ignore[attr-defined]
-        exc.code = "RATE_LIMIT_VOTE_HOURLY"  # type: ignore[attr-defined]
-        exc.response = {}  # type: ignore[attr-defined]
+    def test_rate_limit_error(self, mock_client: MagicMock) -> None:
+        """ColonyRateLimitError exposes Retry-After and message hint."""
+        exc = ColonyRateLimitError(
+            "vote_post failed: HTTP 429 (rate limited — slow down and retry after the backoff window)",
+            status=429,
+            code="RATE_LIMIT_VOTE_HOURLY",
+            retry_after=7,
+        )
         mock_client.vote_post.side_effect = exc
         tool = ColonyVoteOnPost(client=mock_client)
         result = tool._run(post_id="p1")
-        assert "Rate limited" in result
+        assert "rate limited" in result.lower()
         assert "RATE_LIMIT_VOTE_HOURLY" in result
+        # The exception itself remembers the Retry-After value for callers
+        # who want to do higher-level backoff above the SDK's built-in retries.
+        assert exc.retry_after == 7
 
-    def test_network_error_message(self, mock_client: MagicMock) -> None:
-        """Network errors without status codes still produce readable output."""
-        mock_client.get_me.side_effect = ConnectionError("Connection refused")
-        tool = ColonyGetMe(client=mock_client)
-        result = tool._run()
-        assert "Error" in result
-        assert "Connection refused" in result
-
-    def test_error_with_response_detail(self, mock_client: MagicMock) -> None:
-        """Response body detail is included when available."""
-        exc = Exception("Bad request")
-        exc.status = 400  # type: ignore[attr-defined]
-        exc.code = None  # type: ignore[attr-defined]
-        exc.response = {"detail": "title must be at least 3 characters"}  # type: ignore[attr-defined]
+    def test_validation_error(self, mock_client: MagicMock) -> None:
+        exc = ColonyValidationError(
+            "create_post failed: title must be at least 3 characters (validation failed — check field requirements)",
+            status=400,
+        )
         mock_client.create_post.side_effect = exc
         tool = ColonyCreatePost(client=mock_client)
         result = tool._run(title="Hi", body="test")
         assert "400" in result
         assert "title must be at least 3 characters" in result
 
+    def test_auth_error(self, mock_client: MagicMock) -> None:
+        mock_client.get_me.side_effect = ColonyAuthError(
+            "get_me failed: HTTP 401 (unauthorized — check your API key)",
+            status=401,
+        )
+        tool = ColonyGetMe(client=mock_client)
+        result = tool._run()
+        assert "401" in result
+        assert "unauthorized" in result.lower()
 
-class TestRetry:
-    def test_is_retryable_429(self) -> None:
-        exc = Exception("rate limited")
-        exc.status = 429  # type: ignore[attr-defined]
-        assert _is_retryable(exc) is True
-
-    def test_is_retryable_500(self) -> None:
-        exc = Exception("server error")
-        exc.status = 500  # type: ignore[attr-defined]
-        assert _is_retryable(exc) is True
-
-    def test_not_retryable_404(self) -> None:
-        exc = Exception("not found")
-        exc.status = 404  # type: ignore[attr-defined]
-        assert _is_retryable(exc) is False
-
-    def test_not_retryable_plain_exception(self) -> None:
-        assert _is_retryable(Exception("bad")) is False
-
-    def test_retryable_timeout(self) -> None:
-        assert _is_retryable(TimeoutError()) is True
-
-    def test_retryable_connection_error(self) -> None:
-        assert _is_retryable(ConnectionError()) is True
-
-    @patch("crewai_colony.tools.time.sleep")
-    def test_retries_on_429(self, mock_sleep: MagicMock) -> None:
-        exc = Exception("rate limited")
-        exc.status = 429  # type: ignore[attr-defined]
-        call_count = 0
-
-        def flaky(*args: Any, **kwargs: Any) -> dict[str, str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                raise exc
-            return {"status": "ok"}
-
-        from crewai_colony.tools import _fmt_simple
-
-        result = _safe_run(flaky, _fmt_simple)
-        assert "OK" in result
-        assert call_count == 3
-        assert mock_sleep.call_count == 2
-
-    @patch("crewai_colony.tools.time.sleep")
-    def test_no_retry_on_400(self, mock_sleep: MagicMock) -> None:
-        exc = Exception("bad request")
-        exc.status = 400  # type: ignore[attr-defined]
-
-        def always_fail(*args: Any, **kwargs: Any) -> None:
-            raise exc
-
-        from crewai_colony.tools import _fmt_simple
-
-        result = _safe_run(always_fail, _fmt_simple)
+    def test_network_error(self, mock_client: MagicMock) -> None:
+        """Network errors carry status=0 — we suppress that from the prefix
+        so the message reads ``Error — Colony API network error ...``."""
+        mock_client.get_me.side_effect = ColonyNetworkError(
+            "Colony API network error: Connection refused",
+            status=0,
+            response={},
+        )
+        tool = ColonyGetMe(client=mock_client)
+        result = tool._run()
         assert "Error" in result
-        mock_sleep.assert_not_called()
+        # Don't surface a misleading "(0)" prefix for network failures
+        assert "(0)" not in result
+        assert "Connection refused" in result
 
-    @patch("crewai_colony.tools.time.sleep")
-    def test_gives_up_after_max_retries(self, mock_sleep: MagicMock) -> None:
-        exc = Exception("server error")
-        exc.status = 500  # type: ignore[attr-defined]
-
-        def always_fail(*args: Any, **kwargs: Any) -> None:
-            raise exc
-
-        from crewai_colony.tools import _fmt_simple
-
-        result = _safe_run(always_fail, _fmt_simple)
+    def test_non_sdk_exception(self, mock_client: MagicMock) -> None:
+        """Anything that escapes the SDK still gets caught at the tool boundary."""
+        mock_client.get_me.side_effect = ConnectionError("dns lookup failed")
+        tool = ColonyGetMe(client=mock_client)
+        result = tool._run()
         assert "Error" in result
-        assert mock_sleep.call_count == 2  # retried twice before giving up
+        assert "dns lookup failed" in result
 
 
 # ── Registration ───────────────────────────────────────────────────
