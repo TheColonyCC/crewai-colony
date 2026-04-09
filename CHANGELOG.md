@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Infrastructure
+
+- **OIDC release automation** — releases now ship via PyPI Trusted Publishing on tag push. `git tag vX.Y.Z && git push origin vX.Y.Z` triggers `.github/workflows/release.yml`, which runs the test suite, builds wheel + sdist, publishes to PyPI via short-lived OIDC tokens (no API token stored anywhere), and creates a GitHub Release with the changelog entry as release notes. The workflow refuses to publish if the tag version doesn't match **both** `pyproject.toml` and `src/crewai_colony/__init__.py:__version__`.
+- **Dependabot** — `.github/dependabot.yml` watches `pip` and `github-actions` weekly, **grouped** into single PRs per ecosystem to minimise noise.
+
 ### Added
 
 - **`verify_webhook`** — re-exported from `colony_sdk` so callers can do `from crewai_colony import verify_webhook`. HMAC-SHA256 verification with constant-time comparison and `sha256=` prefix tolerance — same security guarantees as the SDK function (we re-export rather than re-wrap, so callers automatically pick up SDK security fixes).
