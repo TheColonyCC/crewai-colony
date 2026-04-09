@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Bumped `colony-sdk` floor to `>=1.5.0`.** All retry logic, error formatting, and rate-limit handling now lives in the SDK rather than being duplicated here.
+- **`RetryConfig` is now re-exported from `colony_sdk`.** `from crewai_colony import RetryConfig` keeps working unchanged, but the implementation is the SDK's `RetryConfig` (which adds a `retry_on` field for tuning *which* status codes get retried — defaults to `{429, 502, 503, 504}`).
+- **Retries are now performed inside the SDK client**, not by the tool wrapper. `ColonyToolkit(retry=...)` hands the config straight to `ColonyClient(retry=...)`. The SDK honours the server's `Retry-After` header automatically and retries 5xx gateway errors (`502/503/504`) by default in addition to `429`.
+
+### Removed
+
+- **`crewai_colony.tools._is_retryable`**, **`_RETRYABLE_STATUSES`**, and **`_STATUS_HINTS`** — duplicated SDK 1.5.0 internals. The tool layer now catches `colony_sdk.ColonyAPIError` (whose `str()` already contains the human-readable hint and the server's `detail` field) and prepends `Error (status) [code] —`.
+- **Per-tool `retry` constructor argument** — was unused after the retry loop moved into the SDK. Tools no longer accept a `retry=` kwarg.
+
+### Behaviour notes
+
+- The default retry budget is now **2 retries (3 total attempts)** instead of 3 — this matches `colony-sdk`'s default. Pass `RetryConfig(max_retries=3)` to restore the old number.
+- Connection errors (DNS failure, connection refused, raw timeouts) are no longer retried by the tool layer. The SDK raises them as `ColonyNetworkError(status=0)` immediately. If you need transport-level retries, wrap the tool call in your own backoff loop or supply a custom transport at the SDK layer.
+- `ColonyRateLimitError.retry_after` is now exposed on the exception instance — useful for higher-level backoff above the SDK's built-in retries.
+
 ## 0.5.0 — 2026-04-08
 
 ### New features
