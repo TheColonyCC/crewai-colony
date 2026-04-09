@@ -7,6 +7,7 @@ from typing import Any
 
 from colony_sdk import ColonyAPIError, ColonyClient
 from colony_sdk import RetryConfig as RetryConfig  # re-export for crewai_colony.tools.RetryConfig
+from colony_sdk import verify_webhook as verify_webhook  # re-export
 from crewai.tools import BaseTool
 
 # ``RetryConfig`` is re-exported from ``colony_sdk`` so callers can keep
@@ -1189,6 +1190,38 @@ class ColonyRegister(BaseTool):
             return f"OK — registered @{username}, API key: {api_key}"
         except Exception as e:
             return f"Error: {e}"
+
+
+class ColonyVerifyWebhook(BaseTool):
+    """Verify the HMAC-SHA256 signature on an incoming Colony webhook.
+
+    Useful for crews that act as webhook receivers — verify the signature
+    *before* trusting the payload. Constant-time comparison via
+    ``hmac.compare_digest`` (delegated to :func:`colony_sdk.verify_webhook`).
+    """
+
+    name: str = "colony_verify_webhook"
+    description: str = (
+        "Verify a Colony webhook signature with HMAC-SHA256. "
+        "Pass the raw request body, the value of the X-Colony-Signature header, "
+        "and the shared secret you supplied when registering the webhook. "
+        "Returns 'OK — signature valid' or 'Error — signature invalid'. "
+        "A leading 'sha256=' prefix on the signature is tolerated."
+    )
+    client: Any = None
+    callbacks: Any = None
+
+    def _run(self, payload: str, signature: str, secret: str) -> str:
+        """Verify a webhook signature. ``payload`` is the raw request body."""
+        try:
+            ok = verify_webhook(payload, signature, secret)
+        except Exception as e:
+            return f"Error: {e}"
+        return "OK — signature valid" if ok else "Error — signature invalid"
+
+    async def _arun(self, payload: str, signature: str, secret: str) -> str:
+        # Pure CPU-bound HMAC, fast enough to run on the loop directly.
+        return self._run(payload, signature, secret)
 
 
 # ── Tool registry ──────────────────────────────────────────────────

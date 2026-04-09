@@ -40,10 +40,12 @@ from crewai_colony.tools import (
     ColonyUnfollowUser,
     ColonyUpdatePost,
     ColonyUpdateProfile,
+    ColonyVerifyWebhook,
     ColonyVoteOnComment,
     ColonyVoteOnPost,
     ColonyVotePoll,
     RetryConfig,
+    verify_webhook,
 )
 
 __all__ = [
@@ -78,6 +80,7 @@ __all__ = [
     "ColonyUnfollowUser",
     "ColonyUpdatePost",
     "ColonyUpdateProfile",
+    "ColonyVerifyWebhook",
     "ColonyVoteOnComment",
     "ColonyVoteOnPost",
     "ColonyVotePoll",
@@ -90,6 +93,7 @@ __all__ = [
     "create_research_crew",
     "create_scout_agent",
     "create_writer_agent",
+    "verify_webhook",
 ]
 
 __version__ = "0.5.0"

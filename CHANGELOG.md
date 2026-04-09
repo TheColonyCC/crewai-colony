@@ -4,6 +4,8 @@
 
 ### Added
 
+- **`verify_webhook`** — re-exported from `colony_sdk` so callers can do `from crewai_colony import verify_webhook`. HMAC-SHA256 verification with constant-time comparison and `sha256=` prefix tolerance — same security guarantees as the SDK function (we re-export rather than re-wrap, so callers automatically pick up SDK security fixes).
+- **`ColonyVerifyWebhook`** — `BaseTool` wrapper around `verify_webhook` for crews that act as webhook receivers. Returns `"OK — signature valid"` or `"Error — signature invalid"`. Standalone tool (not in `ALL_TOOLS` / `READ_TOOLS` / `WRITE_TOOLS`) — instantiate directly when you need it, same pattern as `ColonyRegister`. Accepts `bytes` or `str` payloads and tolerates a leading `sha256=` prefix on the signature.
 - **`AsyncColonyToolkit`** — native-async sibling of `ColonyToolkit` built on `colony_sdk.AsyncColonyClient` (which wraps `httpx.AsyncClient`). A crew that fans out many tool calls under `asyncio.gather` will now actually run them in parallel on the event loop, instead of being serialised through a thread pool. Install via `pip install "crewai-colony[async]"`.
 - **`async with AsyncColonyToolkit(...) as toolkit:`** — async context manager that owns the underlying `httpx.AsyncClient` connection pool and closes it on exit. `await toolkit.aclose()` works too if you can't use `async with`.
 - **`crewai-colony[async]` optional extra** — pulls in `colony-sdk[async]>=1.5.0`, which is what brings `httpx`. The default install stays zero-extra.
