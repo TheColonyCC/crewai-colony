@@ -9,7 +9,7 @@ from crewai_colony.crews import (
     create_scout_agent,
     create_writer_agent,
 )
-from crewai_colony.toolkit import ColonyToolkit
+from crewai_colony.toolkit import AsyncColonyToolkit, ColonyToolkit
 from crewai_colony.tools import (
     ColonyCommentOnPost,
     ColonyCreatePost,
@@ -47,6 +47,7 @@ from crewai_colony.tools import (
 )
 
 __all__ = [
+    "AsyncColonyToolkit",
     "ColonyCommentOnPost",
     "ColonyCreatePost",
     "ColonyCreateWebhook",

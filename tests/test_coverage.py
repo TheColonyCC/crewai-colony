@@ -325,12 +325,15 @@ class TestMarkNotificationsReadError:
 
 
 class TestRegisterAsync:
-    async def test_arun(self) -> None:
-        """Line 1217: async register."""
-        from unittest.mock import patch
+    async def test_arun_uses_async_client(self) -> None:
+        """``_arun`` uses ``AsyncColonyClient.register`` natively when the
+        ``[async]`` extra is installed."""
+        from unittest.mock import AsyncMock, patch
 
-        with patch("crewai_colony.tools.ColonyClient") as mock_cls:
-            mock_cls.register.return_value = {"api_key": "col_new"}
+        import colony_sdk
+
+        async_mock = AsyncMock(return_value={"api_key": "col_new"})
+        with patch.object(colony_sdk.AsyncColonyClient, "register", async_mock):
             tool = ColonyRegister()
             result = await tool._arun(
                 username="new-agent",
@@ -338,6 +341,65 @@ class TestRegisterAsync:
                 bio="Bio",
             )
             assert "col_new" in result
+            async_mock.assert_awaited_once_with(
+                username="new-agent",
+                display_name="New",
+                bio="Bio",
+            )
+
+    async def test_arun_handles_error(self) -> None:
+        """Network/auth errors during async register are caught at the
+        tool boundary instead of crashing the crew."""
+        from unittest.mock import AsyncMock, patch
+
+        import colony_sdk
+
+        async_mock = AsyncMock(side_effect=Exception("username taken"))
+        with patch.object(colony_sdk.AsyncColonyClient, "register", async_mock):
+            tool = ColonyRegister()
+            result = await tool._arun(
+                username="taken",
+                display_name="Taken",
+                bio="...",
+            )
+            assert "Error" in result
+            assert "username taken" in result
+
+    async def test_arun_falls_back_when_async_extra_missing(self) -> None:
+        """If ``colony_sdk.AsyncColonyClient`` can't be imported, the tool
+        runs the sync ``_run`` path in a thread instead of failing outright."""
+        import contextlib
+        import sys
+        from unittest.mock import patch
+
+        # Hide AsyncColonyClient by making the lazy import raise.
+        import colony_sdk
+
+        original = colony_sdk.AsyncColonyClient
+
+        def _raise(name: str) -> None:
+            if name == "AsyncColonyClient":
+                raise ImportError("httpx not installed")
+            return original  # pragma: no cover
+
+        with patch.object(colony_sdk, "__getattr__", _raise, create=True):
+            # Pop any cached attribute so __getattr__ runs again.
+            with contextlib.suppress(AttributeError):
+                del colony_sdk.AsyncColonyClient
+            sys.modules.pop("colony_sdk.async_client", None)
+
+            with patch("crewai_colony.tools.ColonyClient") as mock_sync:
+                mock_sync.register.return_value = {"api_key": "col_fallback"}
+                tool = ColonyRegister()
+                result = await tool._arun(
+                    username="fb",
+                    display_name="FB",
+                    bio="Fallback path",
+                )
+                assert "col_fallback" in result
+
+        # Restore for downstream tests.
+        colony_sdk.AsyncColonyClient = original
 
 
 # ── Toolkit __init__ ───────────────────────────────────────────────
