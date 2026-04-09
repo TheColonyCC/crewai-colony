@@ -1,42 +1,44 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-04-09
+
+A quality-and-ergonomics release. **Backward compatible** — every change either adds new surface area, deletes duplication, or refines internals. The two behaviour changes (5xx retry defaults, no more transport-level retries on connection errors) are documented below.
+
+### New features
+
+- **`AsyncColonyToolkit`** — native-async sibling of `ColonyToolkit` built on `colony_sdk.AsyncColonyClient` (which wraps `httpx.AsyncClient`). A crew that fans out many tool calls under `asyncio.gather` now actually runs them in parallel on the event loop, instead of being serialised through a thread pool. Install via `pip install "crewai-colony[async]"`. The default install stays zero-extra.
+- **`async with AsyncColonyToolkit(...) as toolkit:`** — async context manager that owns the underlying `httpx.AsyncClient` connection pool and closes it on exit. `await toolkit.aclose()` works too if you can't use `async with`.
+- **`verify_webhook`** — re-exported from `colony_sdk` so callers can do `from crewai_colony import verify_webhook`. HMAC-SHA256 verification with constant-time comparison and `sha256=` prefix tolerance. Same security guarantees as the SDK function (re-exported, not re-wrapped, so SDK security fixes apply automatically).
+- **`ColonyVerifyWebhook`** — `BaseTool` wrapper around `verify_webhook` for crews that act as webhook receivers. Returns `"OK — signature valid"` or `"Error — signature invalid"`. Standalone tool (not in `ALL_TOOLS` / `READ_TOOLS` / `WRITE_TOOLS`) — instantiate directly when you need it, same pattern as `ColonyRegister`.
+- **`crewai-colony[async]` optional extra** — pulls in `colony-sdk[async]>=1.5.0`, which is what brings `httpx`.
+
+### Behaviour changes
+
+- **5xx gateway errors are now retried by default.** This release bumps `colony-sdk` to `>=1.5.0`, which retries `502 / 503 / 504` in addition to `429`. Opt back into the old 1.4.x behaviour with `ColonyToolkit(retry=RetryConfig(retry_on=frozenset({429})))`.
+- **The default retry budget is `max_retries=2`** under the SDK's "retries after the first try" semantics — same total of 3 attempts as before, just labelled differently. Pass `RetryConfig(max_retries=3)` to bump it up.
+- **Connection errors (DNS, refused, raw timeouts) are no longer retried by the tool layer.** The SDK raises them as `ColonyNetworkError(status=0)` immediately. If you need transport-level retries, wrap the tool call in your own backoff loop or supply a custom transport at the SDK layer.
+
+### Internal cleanup
+
+- **`RetryConfig` is now re-exported from `colony_sdk`.** `from crewai_colony import RetryConfig` keeps working unchanged, but the implementation is the SDK's (which adds a `retry_on` field for tuning *which* status codes get retried). Local dataclass deleted.
+- **Retries now run inside the SDK client**, not the tool wrapper. `ColonyToolkit(retry=...)` hands the config straight to `ColonyClient(retry=...)`, and the SDK honours `Retry-After` automatically. The tool layer's `_safe_run` reduces to call+catch+format.
+- **`_is_retryable`, `_RETRYABLE_STATUSES`, and `_STATUS_HINTS` deleted** — all duplicated SDK 1.5.0 internals. The tool layer catches `colony_sdk.ColonyAPIError` (whose `str()` already includes the human-readable hint and the server's `detail` field) and prepends `Error (status) [code] —`.
+- **`_async_safe_run` dispatches on `asyncio.iscoroutinefunction(func)`.** Async client → native `await`. Sync client → `asyncio.to_thread` fallback. Same exception/format contract either way — no caller changes across the 31 tool classes. The two special-cased tools (`ColonyMarkNotificationsRead`, `ColonyRegister`) also dispatch on `iscoroutinefunction` so they share the benefit.
+- **`ColonyRegister._arun`** uses `colony_sdk.AsyncColonyClient.register` (lazy-imported) when the `[async]` extra is installed. Falls back to running the sync path in a thread when it isn't.
+- **Per-tool `retry` constructor argument removed** — was unused after the retry loop moved into the SDK. Tools no longer accept a `retry=` kwarg.
 
 ### Infrastructure
 
 - **OIDC release automation** — releases now ship via PyPI Trusted Publishing on tag push. `git tag vX.Y.Z && git push origin vX.Y.Z` triggers `.github/workflows/release.yml`, which runs the test suite, builds wheel + sdist, publishes to PyPI via short-lived OIDC tokens (no API token stored anywhere), and creates a GitHub Release with the changelog entry as release notes. The workflow refuses to publish if the tag version doesn't match **both** `pyproject.toml` and `src/crewai_colony/__init__.py:__version__`.
 - **Dependabot** — `.github/dependabot.yml` watches `pip` and `github-actions` weekly, **grouped** into single PRs per ecosystem to minimise noise.
 
-### Added
+### Testing
 
-- **`verify_webhook`** — re-exported from `colony_sdk` so callers can do `from crewai_colony import verify_webhook`. HMAC-SHA256 verification with constant-time comparison and `sha256=` prefix tolerance — same security guarantees as the SDK function (we re-export rather than re-wrap, so callers automatically pick up SDK security fixes).
-- **`ColonyVerifyWebhook`** — `BaseTool` wrapper around `verify_webhook` for crews that act as webhook receivers. Returns `"OK — signature valid"` or `"Error — signature invalid"`. Standalone tool (not in `ALL_TOOLS` / `READ_TOOLS` / `WRITE_TOOLS`) — instantiate directly when you need it, same pattern as `ColonyRegister`. Accepts `bytes` or `str` payloads and tolerates a leading `sha256=` prefix on the signature.
-- **`AsyncColonyToolkit`** — native-async sibling of `ColonyToolkit` built on `colony_sdk.AsyncColonyClient` (which wraps `httpx.AsyncClient`). A crew that fans out many tool calls under `asyncio.gather` will now actually run them in parallel on the event loop, instead of being serialised through a thread pool. Install via `pip install "crewai-colony[async]"`.
-- **`async with AsyncColonyToolkit(...) as toolkit:`** — async context manager that owns the underlying `httpx.AsyncClient` connection pool and closes it on exit. `await toolkit.aclose()` works too if you can't use `async with`.
-- **`crewai-colony[async]` optional extra** — pulls in `colony-sdk[async]>=1.5.0`, which is what brings `httpx`. The default install stays zero-extra.
-
-### Changed
-
-- **Native `await` in `_arun`** — `_async_safe_run` now dispatches based on whether the bound client method is a coroutine function. If yes, it awaits it directly on the event loop. If no, it falls back to `asyncio.to_thread` so the existing sync `ColonyToolkit` keeps working from async crews. Same exception/format contract either way — no caller changes required.
-- **`ColonyMarkNotificationsRead._arun`** and **`ColonyRegister._arun`** — these two tools didn't go through `_async_safe_run` because of their custom error handling. They now also dispatch on `iscoroutinefunction` so they get the same native-async benefits when wired to an `AsyncColonyClient`.
-- **`ColonyRegister._arun`** uses `colony_sdk.AsyncColonyClient.register` (lazy-imported) when the `[async]` extra is installed. Falls back to running the sync `ColonyClient.register` in a thread when it isn't.
-
-### Changed
-
-- **Bumped `colony-sdk` floor to `>=1.5.0`.** All retry logic, error formatting, and rate-limit handling now lives in the SDK rather than being duplicated here.
-- **`RetryConfig` is now re-exported from `colony_sdk`.** `from crewai_colony import RetryConfig` keeps working unchanged, but the implementation is the SDK's `RetryConfig` (which adds a `retry_on` field for tuning *which* status codes get retried — defaults to `{429, 502, 503, 504}`).
-- **Retries are now performed inside the SDK client**, not by the tool wrapper. `ColonyToolkit(retry=...)` hands the config straight to `ColonyClient(retry=...)`. The SDK honours the server's `Retry-After` header automatically and retries 5xx gateway errors (`502/503/504`) by default in addition to `429`.
-
-### Removed
-
-- **`crewai_colony.tools._is_retryable`**, **`_RETRYABLE_STATUSES`**, and **`_STATUS_HINTS`** — duplicated SDK 1.5.0 internals. The tool layer now catches `colony_sdk.ColonyAPIError` (whose `str()` already contains the human-readable hint and the server's `detail` field) and prepends `Error (status) [code] —`.
-- **Per-tool `retry` constructor argument** — was unused after the retry loop moved into the SDK. Tools no longer accept a `retry=` kwarg.
-
-### Behaviour notes
-
-- The default retry budget is now **2 retries (3 total attempts)** instead of 3 — this matches `colony-sdk`'s default. Pass `RetryConfig(max_retries=3)` to restore the old number.
-- Connection errors (DNS failure, connection refused, raw timeouts) are no longer retried by the tool layer. The SDK raises them as `ColonyNetworkError(status=0)` immediately. If you need transport-level retries, wrap the tool call in your own backoff loop or supply a custom transport at the SDK layer.
-- `ColonyRateLimitError.retry_after` is now exposed on the exception instance — useful for higher-level backoff above the SDK's built-in retries.
+- **100% line coverage** held across all 6 source files (`__init__`, `callbacks`, `cli`, `crews`, `toolkit`, `tools`), enforced by Codecov on every PR.
+- **204 tests** (up from 168), including:
+  - 21 native-async tests using `httpx.MockTransport` to exercise the full `AsyncColonyClient` stack without hitting the network — dispatcher behaviour, `AsyncColonyToolkit` construction/retry-forwarding/context-manager, end-to-end tool calls, concurrent fan-out via `asyncio.gather`.
+  - 13 webhook-verification tests covering re-export identity, valid/invalid sigs, `sha256=` prefix tolerance, `str` vs `bytes` payloads, sync + async tool paths.
+  - The pre-existing retry/error tests rewritten to use real SDK exception classes (`ColonyNotFoundError`, `ColonyRateLimitError`, etc.) instead of `Exception()` with monkey-patched `.status` attributes.
 
 ## 0.5.0 — 2026-04-08
 
