@@ -6,29 +6,40 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install ruff
-      - run: ruff check src/ tests/
-      - run: ruff format --check src/ tests/
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check src/ tests/
+      - name: Format check
+        run: ruff format --check src/ tests/
 
   typecheck:
+    name: typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install mypy colony-sdk crewai
-      - run: mypy src/
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Mypy
+        run: mypy src/
 
   test:
+    name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -38,7 +49,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install colony-sdk crewai pytest pytest-asyncio pytest-cov
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
       - name: Run tests with coverage
         if: matrix.python-version == '3.12'
         run: pytest -v --cov=crewai_colony --cov-report=xml --cov-report=term-missing
