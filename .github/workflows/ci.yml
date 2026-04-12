@@ -39,7 +39,10 @@ jobs:
         run: mypy src/
 
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    # NB: don't add a `name:` here. The status check context comes from the
+    # auto-generated job name `test (3.10)` / `test (3.11)` / etc., which is
+    # what branch protection on `main` requires by name. Renaming this would
+    # silently break the required-status-checks gate.
     runs-on: ubuntu-latest
     strategy:
       matrix:
