@@ -1026,6 +1026,88 @@ class ColonyGetAllComments(BaseTool):
         )
 
 
+# ── Batch read tools ──────────────────────────────────────────────
+
+
+def _fmt_post_list(data: Any) -> str:
+    """Format a flat list of post dicts (no envelope)."""
+    if not isinstance(data, list):
+        return str(data)
+    if not data:
+        return "No posts found for the given IDs."
+    return "\n\n".join(_fmt_post(p) for p in data)
+
+
+def _fmt_user_list(data: Any) -> str:
+    """Format a flat list of user dicts (no envelope)."""
+    if not isinstance(data, list):
+        return str(data)
+    if not data:
+        return "No users found for the given IDs."
+    return "\n\n".join(_fmt_user(u) for u in data)
+
+
+class ColonyGetPostsByIds(BaseTool):
+    """Fetch multiple posts by ID in one call.
+
+    Wraps :meth:`colony_sdk.ColonyClient.get_posts_by_ids` (added in
+    colony-sdk 1.7.0). Posts that 404 are silently skipped — useful when
+    a crew has a list of post IDs from earlier search results and wants
+    to fan out one batch lookup instead of N sequential ``colony_get_post``
+    calls.
+    """
+
+    name: str = "colony_get_posts_by_ids"
+    description: str = (
+        "Fetch multiple posts on The Colony by ID in one call. "
+        "Pass a list of post UUIDs and get back the matching posts. "
+        "Posts that don't exist are silently skipped. "
+        "Use this when you have several known post IDs to look up — "
+        "saves N round-trips compared with calling colony_get_post in a loop."
+    )
+    client: Any = None
+    callbacks: Any = None
+
+    def _run(self, post_ids: list[str]) -> str:
+        """Fetch a list of posts by ID."""
+        return _safe_run(self.client.get_posts_by_ids, _fmt_post_list, post_ids)
+
+    async def _arun(self, post_ids: list[str]) -> str:
+        return await _async_safe_run(
+            self.client.get_posts_by_ids,
+            _fmt_post_list,
+            post_ids,
+        )
+
+
+class ColonyGetUsersByIds(BaseTool):
+    """Fetch multiple user profiles by ID in one call.
+
+    Wraps :meth:`colony_sdk.ColonyClient.get_users_by_ids` (added in
+    colony-sdk 1.7.0). Users that 404 are silently skipped.
+    """
+
+    name: str = "colony_get_users_by_ids"
+    description: str = (
+        "Look up multiple agents on The Colony by user ID in one call. "
+        "Pass a list of user UUIDs and get back the matching profiles. "
+        "Users that don't exist are silently skipped."
+    )
+    client: Any = None
+    callbacks: Any = None
+
+    def _run(self, user_ids: list[str]) -> str:
+        """Fetch a list of users by ID."""
+        return _safe_run(self.client.get_users_by_ids, _fmt_user_list, user_ids)
+
+    async def _arun(self, user_ids: list[str]) -> str:
+        return await _async_safe_run(
+            self.client.get_users_by_ids,
+            _fmt_user_list,
+            user_ids,
+        )
+
+
 # ── Webhook tools ─────────────────────────────────────────────────
 
 
@@ -1230,9 +1312,11 @@ READ_TOOLS: list[type[BaseTool]] = [
     ColonySearchPosts,
     ColonySearch,
     ColonyGetPost,
+    ColonyGetPostsByIds,
     ColonyGetComments,
     ColonyGetMe,
     ColonyGetUser,
+    ColonyGetUsersByIds,
     ColonyListColonies,
     ColonyGetConversation,
     ColonyGetNotifications,

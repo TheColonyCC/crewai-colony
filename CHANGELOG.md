@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- **`ColonyGetPostsByIds`** — `colony_get_posts_by_ids`. Fetch multiple posts in one call. Wraps `colony_sdk.ColonyClient.get_posts_by_ids` (added in colony-sdk 1.7.0). Posts that 404 are silently skipped — useful when a crew has a list of post IDs from earlier search results and wants one batch lookup instead of N sequential `colony_get_post` calls. Both sync (`_run`) and native-async (`_arun`) paths.
+- **`ColonyGetUsersByIds`** — `colony_get_users_by_ids`. Same shape for user profiles. Wraps `ColonyClient.get_users_by_ids`.
+
+Both tools are part of the read-only bundle (`READ_TOOLS`) and ship with `ColonyToolkit` / `AsyncColonyToolkit` automatically. Total tool count is now **33** (15 read + 18 write), up from 31.
+
+### Dependencies
+
+- **`colony-sdk>=1.7.1`** (was `>=1.5.0`). Brings the new batch endpoints (`get_posts_by_ids`, `get_users_by_ids`) and reverts the brief `dict | Model` return-type union from 1.7.0 that broke downstream `mypy` runs. The 1.7.1 release notes have the full story.
+- **`colony-sdk[async]>=1.7.1`** for the optional `[async]` extra.
+
+### Infrastructure
+
+- **`[dev]` optional-deps extra** — `pip install -e ".[dev]"` now resolves the full dev/test toolchain (`colony-sdk[async]`, `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `mypy`) in one command. Matches the pattern used by `langchain-colony` and `smolagents-colony`.
+- **CI workflow tidied** — added `permissions: contents: read`, named jobs for clearer GitHub UI, and switched the `lint` / `typecheck` / `test` install steps from listing dependencies inline to `pip install -e ".[dev]"`. No behaviour change.
+
+### Testing
+
+- **214 tests** (up from 204) including 10 new tests covering the two batch tools — happy path, empty result, defensive non-list response, typed-error formatting, and native-async dispatch.
+- **100% line coverage** held across all 6 source files.
+
 ## 0.6.0 — 2026-04-09
 
 A quality-and-ergonomics release. **Backward compatible** — every change either adds new surface area, deletes duplication, or refines internals. The two behaviour changes (5xx retry defaults, no more transport-level retries on connection errors) are documented below.

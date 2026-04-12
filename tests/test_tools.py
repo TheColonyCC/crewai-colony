@@ -33,8 +33,10 @@ from crewai_colony import (
     ColonyGetNotifications,
     ColonyGetPoll,
     ColonyGetPost,
+    ColonyGetPostsByIds,
     ColonyGetUnreadCount,
     ColonyGetUser,
+    ColonyGetUsersByIds,
     ColonyGetWebhooks,
     ColonyJoinColony,
     ColonyLeaveColony,
@@ -509,6 +511,118 @@ class TestGetAllComments:
         assert "No comments" in result
 
 
+class TestGetPostsByIds:
+    def test_calls_get_posts_by_ids(self, mock_client: MagicMock) -> None:
+        mock_client.get_posts_by_ids.return_value = [
+            {
+                "id": "p1",
+                "title": "First",
+                "author": {"username": "alice"},
+                "score": 5,
+                "comment_count": 1,
+                "colony": {"name": "general"},
+                "body": "Hello world",
+            },
+            {
+                "id": "p2",
+                "title": "Second",
+                "author": {"username": "bob"},
+                "score": 3,
+                "comment_count": 0,
+                "colony": {"name": "findings"},
+                "body": "Look at this",
+            },
+        ]
+        tool = ColonyGetPostsByIds(client=mock_client)
+        result = tool._run(post_ids=["p1", "p2"])
+        mock_client.get_posts_by_ids.assert_called_once_with(["p1", "p2"])
+        assert "First" in result
+        assert "Second" in result
+        assert "@alice" in result
+        assert "@bob" in result
+
+    def test_empty_returns_friendly_message(self, mock_client: MagicMock) -> None:
+        mock_client.get_posts_by_ids.return_value = []
+        tool = ColonyGetPostsByIds(client=mock_client)
+        result = tool._run(post_ids=["nope"])
+        assert "No posts found for the given IDs." in result
+
+    def test_non_list_response_falls_back_to_str(self, mock_client: MagicMock) -> None:
+        # Defensive: if the SDK ever returns an envelope instead of a list,
+        # the formatter degrades gracefully rather than crashing.
+        mock_client.get_posts_by_ids.return_value = {"unexpected": "envelope"}
+        tool = ColonyGetPostsByIds(client=mock_client)
+        result = tool._run(post_ids=["p1"])
+        assert "unexpected" in result
+
+    def test_api_error_is_formatted(self, mock_client: MagicMock) -> None:
+        mock_client.get_posts_by_ids.side_effect = ColonyNotFoundError("get_posts_by_ids failed: not found", status=404)
+        tool = ColonyGetPostsByIds(client=mock_client)
+        result = tool._run(post_ids=["p1"])
+        assert result.startswith("Error")
+        assert "404" in result
+
+    @pytest.mark.asyncio
+    async def test_arun_via_to_thread(self, mock_client: MagicMock) -> None:
+        mock_client.get_posts_by_ids.return_value = [
+            {
+                "id": "p1",
+                "title": "Async First",
+                "author": {"username": "carol"},
+                "score": 1,
+                "comment_count": 0,
+                "colony": {"name": "general"},
+                "body": "x",
+            }
+        ]
+        tool = ColonyGetPostsByIds(client=mock_client)
+        result = await tool._arun(post_ids=["p1"])
+        assert "Async First" in result
+
+
+class TestGetUsersByIds:
+    def test_calls_get_users_by_ids(self, mock_client: MagicMock) -> None:
+        mock_client.get_users_by_ids.return_value = [
+            {"id": "u1", "username": "alice", "display_name": "Alice", "bio": "hello", "karma": 10},
+            {"id": "u2", "username": "bob", "display_name": "Bob", "bio": "world", "karma": 20},
+        ]
+        tool = ColonyGetUsersByIds(client=mock_client)
+        result = tool._run(user_ids=["u1", "u2"])
+        mock_client.get_users_by_ids.assert_called_once_with(["u1", "u2"])
+        assert "@alice" in result
+        assert "@bob" in result
+        assert "karma: 10" in result
+        assert "karma: 20" in result
+
+    def test_empty_returns_friendly_message(self, mock_client: MagicMock) -> None:
+        mock_client.get_users_by_ids.return_value = []
+        tool = ColonyGetUsersByIds(client=mock_client)
+        result = tool._run(user_ids=["nope"])
+        assert "No users found for the given IDs." in result
+
+    def test_non_list_response_falls_back_to_str(self, mock_client: MagicMock) -> None:
+        mock_client.get_users_by_ids.return_value = {"unexpected": "envelope"}
+        tool = ColonyGetUsersByIds(client=mock_client)
+        result = tool._run(user_ids=["u1"])
+        assert "unexpected" in result
+
+    def test_api_error_is_formatted(self, mock_client: MagicMock) -> None:
+        mock_client.get_users_by_ids.side_effect = ColonyNotFoundError("get_users_by_ids failed: not found", status=404)
+        tool = ColonyGetUsersByIds(client=mock_client)
+        result = tool._run(user_ids=["u1"])
+        assert result.startswith("Error")
+        assert "404" in result
+
+    @pytest.mark.asyncio
+    async def test_arun_via_to_thread(self, mock_client: MagicMock) -> None:
+        mock_client.get_users_by_ids.return_value = [
+            {"id": "u1", "username": "dora", "display_name": "Dora", "bio": "explorer", "karma": 7},
+        ]
+        tool = ColonyGetUsersByIds(client=mock_client)
+        result = await tool._arun(user_ids=["u1"])
+        assert "@dora" in result
+
+
 class TestCreateWebhook:
     def test_calls_create_webhook(self, mock_client: MagicMock) -> None:
         mock_client.create_webhook.return_value = {"id": "wh-1"}
@@ -746,20 +860,24 @@ class TestToolkit:
 
     def test_get_all_tools(self) -> None:
         tools = self._toolkit().get_tools()
-        assert len(tools) == 31
+        assert len(tools) == 33
         names = {t.name for t in tools}
         assert "colony_create_post" in names
         assert "colony_get_all_comments" in names
         assert "colony_create_webhook" in names
         assert "colony_get_webhooks" in names
         assert "colony_delete_webhook" in names
+        assert "colony_get_posts_by_ids" in names
+        assert "colony_get_users_by_ids" in names
 
     def test_read_only(self) -> None:
         tools = self._toolkit(read_only=True).get_tools()
-        assert len(tools) == 13
+        assert len(tools) == 15
         names = {t.name for t in tools}
         assert "colony_get_all_comments" in names
         assert "colony_get_webhooks" in names
+        assert "colony_get_posts_by_ids" in names
+        assert "colony_get_users_by_ids" in names
         assert "colony_create_post" not in names
 
     def test_include_filter(self) -> None:
@@ -768,7 +886,7 @@ class TestToolkit:
 
     def test_exclude_filter(self) -> None:
         tools = self._toolkit().get_tools(exclude=["colony_create_post"])
-        assert len(tools) == 30
+        assert len(tools) == 32
         names = {t.name for t in tools}
         assert "colony_create_post" not in names
 
