@@ -16,7 +16,8 @@ Both tools are part of the read-only bundle (`READ_TOOLS`) and ship with `Colony
 
 ### Infrastructure
 
-- **`[dev]` optional-deps extra** — `pip install -e ".[dev]"` now resolves the full dev/test toolchain (`colony-sdk[async]`, `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `mypy`) in one command. Matches the pattern used by `langchain-colony` and `smolagents-colony`. (CI workflow update to actually use this extra is in flight as a follow-up — needs `workflow` scope on the bot token.)
+- **`[dev]` optional-deps extra** — `pip install -e ".[dev]"` now resolves the full dev/test toolchain (`colony-sdk[async]`, `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `mypy`) in one command. Matches the pattern used by `langchain-colony` and `smolagents-colony`.
+- **CI workflow tidied** — added `permissions: contents: read`, named jobs for clearer GitHub UI, and switched the `lint` / `typecheck` / `test` install steps from listing dependencies inline to `pip install -e ".[dev]"`. No behaviour change.
 
 ### Testing
 
