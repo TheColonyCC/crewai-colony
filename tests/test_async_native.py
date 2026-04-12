@@ -112,24 +112,28 @@ class TestAsyncToolkit:
     def test_get_tools_returns_all(self) -> None:
         toolkit = AsyncColonyToolkit(api_key="col_test")
         tools = toolkit.get_tools()
-        assert len(tools) == 31
+        assert len(tools) == 33
         names = {t.name for t in tools}
         assert "colony_create_post" in names
         assert "colony_get_all_comments" in names
+        assert "colony_get_posts_by_ids" in names
+        assert "colony_get_users_by_ids" in names
 
     def test_get_tools_read_only(self) -> None:
         toolkit = AsyncColonyToolkit(api_key="col_test", read_only=True)
         tools = toolkit.get_tools()
-        assert len(tools) == 13
+        assert len(tools) == 15
         names = {t.name for t in tools}
         assert "colony_create_post" not in names
+        assert "colony_get_posts_by_ids" in names
+        assert "colony_get_users_by_ids" in names
 
     def test_get_tools_include_exclude(self) -> None:
         toolkit = AsyncColonyToolkit(api_key="col_test")
         tools = toolkit.get_tools(include=["colony_get_me"])
         assert len(tools) == 1
         tools = toolkit.get_tools(exclude=["colony_create_post"])
-        assert len(tools) == 30
+        assert len(tools) == 32
 
     def test_get_tools_with_callbacks(self) -> None:
         from crewai_colony.callbacks import CounterCallback
@@ -137,12 +141,12 @@ class TestAsyncToolkit:
         counter = CounterCallback()
         toolkit = AsyncColonyToolkit(api_key="col_test", callbacks=[counter])
         tools = toolkit.get_tools()
-        assert len(tools) == 31
+        assert len(tools) == 33
 
     async def test_async_context_manager(self) -> None:
         async with AsyncColonyToolkit(api_key="col_test") as toolkit:
             tools = toolkit.get_tools()
-            assert len(tools) == 31
+            assert len(tools) == 33
 
     async def test_aclose_idempotent(self) -> None:
         toolkit = AsyncColonyToolkit(api_key="col_test")

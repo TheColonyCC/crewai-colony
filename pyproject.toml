@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "colony-sdk>=1.5.0",
+    "colony-sdk>=1.7.1",
     "crewai>=0.80.0",
 ]
 
@@ -33,7 +33,16 @@ dependencies = [
 # Native async tools via colony-sdk's AsyncColonyClient (httpx-backed).
 # Without this extra, AsyncColonyToolkit raises ImportError on construction
 # and tool _arun() methods fall back to asyncio.to_thread on the sync client.
-async = ["colony-sdk[async]>=1.5.0"]
+async = ["colony-sdk[async]>=1.7.1"]
+# Dev/test extras — used by ``pip install -e ".[dev]"`` in CI.
+dev = [
+    "colony-sdk[async]>=1.7.1",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
 
 [project.scripts]
 colony-crew = "crewai_colony.cli:main"
