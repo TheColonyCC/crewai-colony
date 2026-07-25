@@ -10,6 +10,8 @@ from colony_sdk import RetryConfig as RetryConfig  # re-export for crewai_colony
 from colony_sdk import verify_webhook as verify_webhook  # re-export
 from crewai.tools import BaseTool
 
+from crewai_colony._response import as_list
+
 # ``RetryConfig`` is re-exported from ``colony_sdk`` so callers can keep
 # importing it from ``crewai_colony``. Retry semantics (max_retries, backoff,
 # Retry-After handling, which status codes are retried) live in the SDK.
@@ -65,12 +67,9 @@ def _fmt_post(p: dict[str, Any]) -> str:
 
 def _fmt_posts(data: Any) -> str:
     """Format a posts list response."""
-    if isinstance(data, dict):
-        posts = data.get("posts", data.get("results", []))
-    elif isinstance(data, list):
-        posts = data
-    else:
+    if not isinstance(data, dict | list):
         return str(data)
+    posts = as_list(data, "get_posts")
     if not posts:
         return "No posts found."
     return "\n\n".join(_fmt_post(p) for p in posts)
@@ -103,12 +102,9 @@ def _fmt_comment(c: dict[str, Any]) -> str:
 
 def _fmt_comments(data: Any) -> str:
     """Format a comments list response."""
-    if isinstance(data, dict):
-        comments = data.get("comments", [])
-    elif isinstance(data, list):
-        comments = data
-    else:
+    if not isinstance(data, dict | list):
         return str(data)
+    comments = as_list(data, "get_comments/get_all_comments")
     if not comments:
         return "No comments found."
     return "\n".join(_fmt_comment(c) for c in comments)
@@ -133,12 +129,9 @@ def _fmt_user(data: Any) -> str:
 
 def _fmt_colonies(data: Any) -> str:
     """Format a colonies list."""
-    if isinstance(data, dict):
-        colonies = data.get("colonies", [])
-    elif isinstance(data, list):
-        colonies = data
-    else:
+    if not isinstance(data, dict | list):
         return str(data)
+    colonies = as_list(data, "get_colonies")
     if not colonies:
         return "No colonies found."
     lines = []
@@ -174,12 +167,9 @@ def _fmt_conversation(data: Any) -> str:
 
 def _fmt_notifications(data: Any) -> str:
     """Format notifications."""
-    if isinstance(data, dict):
-        notifs = data.get("notifications", [])
-    elif isinstance(data, list):
-        notifs = data
-    else:
+    if not isinstance(data, dict | list):
         return str(data)
+    notifs = as_list(data, "get_notifications")
     if not notifs:
         return "No notifications."
     lines = []
@@ -208,12 +198,9 @@ def _fmt_poll(data: Any) -> str:
 
 def _fmt_search(data: Any) -> str:
     """Format search results."""
-    if isinstance(data, dict):
-        results = data.get("results", data.get("posts", []))
-    elif isinstance(data, list):
-        results = data
-    else:
+    if not isinstance(data, dict | list):
         return str(data)
+    results = as_list(data, "search")
     if not results:
         return "No results found."
     return "\n\n".join(_fmt_post(p) for p in results)
@@ -1113,12 +1100,9 @@ class ColonyGetUsersByIds(BaseTool):
 
 def _fmt_webhooks(data: Any) -> str:
     """Format webhook list."""
-    if isinstance(data, dict):
-        webhooks = data.get("webhooks", [])
-    elif isinstance(data, list):
-        webhooks = data
-    else:
+    if not isinstance(data, dict | list):
         return str(data)
+    webhooks = as_list(data, "get_webhooks")
     if not webhooks:
         return "No webhooks registered."
     lines = []

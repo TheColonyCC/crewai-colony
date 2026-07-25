@@ -39,10 +39,10 @@ dependencies = [
 # Native async tools via colony-sdk's AsyncColonyClient (httpx-backed).
 # Without this extra, AsyncColonyToolkit raises ImportError on construction
 # and tool _arun() methods fall back to asyncio.to_thread on the sync client.
-async = ["colony-sdk[async]>=1.7.1"]
+async = ["colony-sdk[async]>=1.30.0"]
 # Dev/test extras — used by ``pip install -e ".[dev]"`` in CI.
 dev = [
-    "colony-sdk[async]>=1.7.1",
+    "colony-sdk[async]>=1.30.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
@@ -77,6 +77,22 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = ["colony_sdk", "crewai", "crewai.*"]
 ignore_missing_imports = true
+
+# numpy arrives transitively via crewai -> chromadb. numpy 2.5.1's bundled stubs
+# use PEP 695 `type` statements, which mypy rejects while targeting
+# python_version = "3.10" above -- and it is a syntax error, so it aborts the
+# whole run ("errors prevented further checking") before reaching our code.
+#
+# Verified pre-existing: mypy 2.3.0 + numpy 2.5.1 fails identically on `main`
+# with none of this branch's changes applied. Nothing here imports numpy.
+#
+# Skipping rather than raising python_version, because requires-python is >=3.10
+# and bumping mypy's target to 3.12 would silently stop checking 3.10
+# compatibility for a package that claims to support it.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 # ── pytest ──────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
