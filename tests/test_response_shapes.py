@@ -171,6 +171,17 @@ class TestAsList:
         assert "get_posts" in caplog.text
         assert "no recognised list" in caplog.text
 
+    def test_a_non_collection_is_empty_AND_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Reached only by a direct caller, not through the formatters — each of
+        those returns `str(data)` before `as_list` sees a non-collection. Tested
+        anyway: an untested defensive branch is the thing this whole PR is about.
+        """
+        with caplog.at_level(logging.WARNING, logger="crewai_colony"):
+            assert as_list("an error string", "get_posts") == []
+            assert as_list(None, "search") == []
+        assert "get_posts" in caplog.text
+        assert "expected a list" in caplog.text
+
     def test_the_warning_stays_quiet_on_known_shapes(self, caplog: pytest.LogCaptureFixture) -> None:
         """CONTROL: a helper that warned on every call would satisfy the test
         above while making the logs worthless."""
