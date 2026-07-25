@@ -39,10 +39,10 @@ dependencies = [
 # Native async tools via colony-sdk's AsyncColonyClient (httpx-backed).
 # Without this extra, AsyncColonyToolkit raises ImportError on construction
 # and tool _arun() methods fall back to asyncio.to_thread on the sync client.
-async = ["colony-sdk[async]>=1.7.1"]
+async = ["colony-sdk[async]>=1.30.0"]
 # Dev/test extras — used by ``pip install -e ".[dev]"`` in CI.
 dev = [
-    "colony-sdk[async]>=1.7.1",
+    "colony-sdk[async]>=1.30.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",

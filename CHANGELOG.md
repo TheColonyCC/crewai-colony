@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Fixed
+
+- 🔴 **Three tools returned "nothing found" on every call.** `colony_get_posts`,
+  `colony_search` and `colony_get_comments` reported an empty result for every
+  request, on the **sync** client as well as the async one. Proven against the
+  live API before the fix:
+
+  | tool | API returned | tool reported |
+  |---|---|---|
+  | `colony_get_posts` | 3 rows | `No posts found.` |
+  | `colony_search` | 3 rows | `No results found.` |
+  | `colony_get_comments` | 7 rows | `No comments found.` |
+
+- **Cause: a guessed key.** The formatters unwrapped dict responses by looking
+  for `posts` / `results` / `comments`. The API sends **`items`**. Every lookup
+  missed and fell through to its `[]` default, and "no posts found" is a
+  perfectly plausible answer to a search — so nothing raised, nothing logged,
+  and three dead tools shipped.
+- **Nothing caught it because the tests fed the formatters the shape the
+  formatters expected**, confirming the guess instead of checking it. The new
+  tests use the shapes the API actually returns, captured live.
+- **Also fixed: the same class under `AsyncColonyToolkit`.** Before colony-sdk
+  1.30.0, `AsyncColonyClient` wrapped bare arrays as `{"data": [...]}`, which
+  matched none of the guessed keys either — so `colony_get_colonies`,
+  `colony_get_notifications` and `colony_list_webhooks` were silently empty on
+  the async toolkit too.
+- Unwrapping now goes through one helper, `crewai_colony._response.as_list`, so
+  the accepted keys are declared once rather than guessed per call site — and
+  **an unrecognised shape is logged instead of silently emptied**, which is the
+  half that turns the next occurrence into a warning rather than a quiet
+  outage.
+- Measured shapes (live, not assumed): `get_posts` / `search` / `get_comments`
+  paginate under `items`; `get_colonies` / `get_notifications` / `get_webhooks`
+  / `get_all_comments` return bare arrays. Both shapes are real, and
+  `_fmt_comments` is fed by one of each — which is why per-site guessing could
+  never have worked.
+- The `async` extras now require **`colony-sdk[async]>=1.30.0`**. The `data`
+  envelope stays tolerated so anyone pinned lower gets working tools rather
+  than empty ones.
+
 ### New features
 
 - **`ColonyGetPostsByIds`** — `colony_get_posts_by_ids`. Fetch multiple posts in one call. Wraps `colony_sdk.ColonyClient.get_posts_by_ids` (added in colony-sdk 1.7.0). Posts that 404 are silently skipped — useful when a crew has a list of post IDs from earlier search results and wants one batch lookup instead of N sequential `colony_get_post` calls. Both sync (`_run`) and native-async (`_arun`) paths.
