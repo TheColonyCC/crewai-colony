@@ -44,7 +44,8 @@ from crewai_colony import (
     ColonyMarkNotificationsRead,
     ColonyReactToComment,
     ColonyReactToPost,
-    ColonyRegister,
+    ColonyRegisterBegin,
+    ColonyRegisterConfirm,
     ColonySearch,
     ColonySearchPosts,
     ColonySendMessage,
@@ -815,38 +816,65 @@ class TestErrorHandling:
 # ── Registration ───────────────────────────────────────────────────
 
 
-class TestRegister:
+class TestRegisterBeginAndConfirm:
+    """Two tools, and the split is the point.
+
+    A single fused register would return a live account whose only copy of the
+    once-shown key is a crew's context. These pin begin/confirm apart.
+    """
+
+    def test_there_is_no_fused_register_tool(self) -> None:
+        import crewai_colony
+
+        assert not hasattr(crewai_colony, "ColonyRegister"), "a fused register tool defeats two-step registration"
+
     @patch("crewai_colony.tools.ColonyClient")
-    def test_calls_register(self, mock_cls: MagicMock) -> None:
-        mock_cls.register.return_value = {"api_key": "col_new_key"}
-        tool = ColonyRegister()
+    def test_begin_reserves_and_says_it_is_not_active(self, mock_cls: MagicMock) -> None:
+        mock_cls.register_begin.return_value = {
+            "api_key": "col_new_key",
+            "claim_token": "claim-xyz",
+        }
+        tool = ColonyRegisterBegin()
         result = tool._run(
             username="new-agent",
             display_name="New Agent",
             bio="I am new",
         )
-        mock_cls.register.assert_called_once_with(
+        mock_cls.register_begin.assert_called_once_with(
             username="new-agent",
             display_name="New Agent",
             bio="I am new",
         )
         assert "col_new_key" in result
         assert "@new-agent" in result
+        # The caller must be told the job is half done, or it will stop here.
+        assert "NOT ACTIVE YET" in result
+        assert "claim-xyz" in result
+        assert "ew_key" in result  # last six characters, derived for the caller
 
     @patch("crewai_colony.tools.ColonyClient")
-    def test_register_error(self, mock_cls: MagicMock) -> None:
-        mock_cls.register.side_effect = Exception("username taken")
-        tool = ColonyRegister()
-        result = tool._run(
-            username="taken",
-            display_name="Taken",
-            bio="...",
-        )
+    def test_begin_error(self, mock_cls: MagicMock) -> None:
+        mock_cls.register_begin.side_effect = Exception("username taken")
+        tool = ColonyRegisterBegin()
+        result = tool._run(username="taken", display_name="Taken", bio="...")
         assert "Error" in result
         assert "username taken" in result
 
+    @patch("crewai_colony.tools.ColonyClient")
+    def test_confirm_activates(self, mock_cls: MagicMock) -> None:
+        mock_cls.register_confirm.return_value = {"username": "new-agent"}
+        tool = ColonyRegisterConfirm()
+        result = tool._run(claim_token="claim-xyz", key_fingerprint="ew_key")
+        mock_cls.register_confirm.assert_called_once_with(
+            claim_token="claim-xyz",
+            key_fingerprint="ew_key",
+        )
+        assert "active" in result
+        assert "@new-agent" in result
 
-# ── Toolkit ────────────────────────────────────────────────────────
+    def test_confirm_description_says_to_read_the_key_back(self) -> None:
+        desc = ColonyRegisterConfirm().description
+        assert "STORED IT" in desc or "stored it" in desc.lower()
 
 
 class TestToolkit:

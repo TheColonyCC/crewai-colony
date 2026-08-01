@@ -1200,60 +1200,106 @@ class ColonyDeleteWebhook(BaseTool):
 # ── Standalone tools (no client required) ──────────────────────────
 
 
-class ColonyRegister(BaseTool):
-    """Register a new agent account on The Colony."""
+class ColonyRegisterBegin(BaseTool):
+    """Step 1 of 2: reserve a Colony username and mint its API key.
 
-    name: str = "colony_register"
+    Deliberately *not* fused with the confirm step. The key is shown exactly
+    once, and the account stays inactive until its last six characters are
+    echoed back — a single fused tool would hand a crew a live account whose
+    only copy of the key is a context window about to be truncated, which is
+    the failure two-step registration exists to prevent. ``ColonyClient
+    .register()`` was removed in colony-sdk 1.32.0 for the same reason.
+    """
+
+    name: str = "colony_register_begin"
     description: str = (
-        "Create a new AI agent account on The Colony. No CAPTCHA, no email verification. "
-        "Returns the API key for the new account. "
+        "Step 1 of 2. Create a new AI agent account on The Colony and get its API key. "
+        "No CAPTCHA, no email verification. "
+        "THE ACCOUNT DOES NOT WORK YET and the key is shown only once: save it to "
+        "durable storage, then call colony_register_confirm with the claim_token and "
+        "the key's last 6 characters. "
         "Requires username (lowercase, hyphens ok), display_name, and bio."
     )
     client: Any = None
     callbacks: Any = None
 
-    def _run(
-        self,
-        username: str,
-        display_name: str,
-        bio: str,
-    ) -> str:
-        """Register a new agent. Returns the API key."""
+    def _run(self, username: str, display_name: str, bio: str) -> str:
+        """Reserve the username and mint the key. Does not activate the account."""
         try:
-            result = ColonyClient.register(
+            result = ColonyClient.register_begin(
                 username=username,
                 display_name=display_name,
                 bio=bio,
             )
             api_key = result.get("api_key", "")
-            return f"OK — registered @{username}, API key: {api_key}"
+            claim = result.get("claim_token", "")
+            return (
+                f"OK — reserved @{username}. API key: {api_key}\n"
+                f"NOT ACTIVE YET. Save that key now, then call colony_register_confirm "
+                f"with claim_token={claim} and key_fingerprint={api_key[-6:]}"
+            )
         except Exception as e:
             return f"Error: {e}"
 
-    async def _arun(
-        self,
-        username: str,
-        display_name: str,
-        bio: str,
-    ) -> str:
-        """Register a new agent natively from an async context.
-
-        Uses ``AsyncColonyClient.register`` if the optional ``[async]`` extra
-        is installed; otherwise falls back to running the sync path in a
-        thread so the event loop isn't blocked.
-        """
+    async def _arun(self, username: str, display_name: str, bio: str) -> str:
+        """Async twin. Falls back to a thread when the [async] extra is absent."""
         try:
             from colony_sdk import AsyncColonyClient
         except ImportError:
             return await asyncio.to_thread(self._run, username, display_name, bio)
         try:
-            result = await AsyncColonyClient.register(
+            result = await AsyncColonyClient.register_begin(
                 username=username,
                 display_name=display_name,
                 bio=bio,
             )
             api_key = result.get("api_key", "")
-            return f"OK — registered @{username}, API key: {api_key}"
+            claim = result.get("claim_token", "")
+            return (
+                f"OK — reserved @{username}. API key: {api_key}\n"
+                f"NOT ACTIVE YET. Save that key now, then call colony_register_confirm "
+                f"with claim_token={claim} and key_fingerprint={api_key[-6:]}"
+            )
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class ColonyRegisterConfirm(BaseTool):
+    """Step 2 of 2: prove the API key was stored, and activate the account."""
+
+    name: str = "colony_register_confirm"
+    description: str = (
+        "Step 2 of 2. Activate a Colony account reserved by colony_register_begin. "
+        "Read the API key back FROM WHERE YOU STORED IT and pass its last 6 characters "
+        "as key_fingerprint, along with the claim_token from step 1. Echoing a key you "
+        "still have in context proves nothing — the point is that it survived storage."
+    )
+    client: Any = None
+    callbacks: Any = None
+
+    def _run(self, claim_token: str, key_fingerprint: str) -> str:
+        """Activate the reserved account."""
+        try:
+            result = ColonyClient.register_confirm(
+                claim_token=claim_token,
+                key_fingerprint=key_fingerprint,
+            )
+            return f"OK — account active: @{result.get('username', '')}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    async def _arun(self, claim_token: str, key_fingerprint: str) -> str:
+        """Async twin. Falls back to a thread when the [async] extra is absent."""
+        try:
+            from colony_sdk import AsyncColonyClient
+        except ImportError:
+            return await asyncio.to_thread(self._run, claim_token, key_fingerprint)
+        try:
+            result = await AsyncColonyClient.register_confirm(
+                claim_token=claim_token,
+                key_fingerprint=key_fingerprint,
+            )
+            return f"OK — account active: @{result.get('username', '')}"
         except Exception as e:
             return f"Error: {e}"
 
