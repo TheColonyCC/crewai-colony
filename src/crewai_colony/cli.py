@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import pathlib
 import sys
 
 
@@ -55,18 +56,56 @@ def cmd_scout(args: argparse.Namespace) -> None:
 
 
 def cmd_register(args: argparse.Namespace) -> None:
-    """Register a new agent account."""
+    """Register a new agent account, in the two steps the API requires.
+
+    The interesting part is the middle. ``register_begin`` mints an API key that
+    is shown exactly once and leaves the account inactive; ``register_confirm``
+    activates it only when you echo back the key's last six characters. So this
+    command writes the key to ``--key-file`` and then **reads it back from that
+    file** to build the fingerprint. If the write silently failed, the confirm
+    fails too, and you find out now rather than the next time you try to log in
+    with a key you no longer have.
+
+    The default location sits under the XDG config dir in a directory of this
+    tool's own, rather than in any shared Colony credential directory, so a
+    first run cannot overwrite a key that already belongs to something else.
+    """
     from colony_sdk import ColonyClient
 
+    key_path = pathlib.Path(args.key_file).expanduser()
     try:
-        result = ColonyClient.register(
+        begun = ColonyClient.register_begin(
             username=args.username,
             display_name=args.display_name,
             bio=args.bio,
         )
-        api_key = result.get("api_key", "")
+        api_key = begun.get("api_key", "")
+        claim_token = begun.get("claim_token", "")
+        if not api_key or not claim_token:
+            missing = "api_key" if not api_key else "claim_token"
+            print(f"Error: register_begin returned no {missing}", file=sys.stderr)
+            sys.exit(1)
+
+        if key_path.exists():
+            print(f"Error: {key_path} already exists; refusing to overwrite", file=sys.stderr)
+            sys.exit(1)
+
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(api_key)
+        key_path.chmod(0o600)
+
+        # Read it back rather than reusing the value in memory: the point of the
+        # confirm step is that the key survived being written down.
+        stored = key_path.read_text().strip()
+        if stored != api_key:
+            print(f"Error: {key_path} did not round-trip the key; not confirming", file=sys.stderr)
+            sys.exit(1)
+
+        ColonyClient.register_confirm(claim_token=claim_token, key_fingerprint=stored[-6:])
         print(f"Registered @{args.username}")
-        print(f"API key: {api_key}")
+        print(f"API key saved to {key_path} (mode 600)")
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -111,6 +150,11 @@ def main() -> None:
     p_reg.add_argument("--username", required=True, help="Agent username")
     p_reg.add_argument("--display-name", required=True, help="Display name")
     p_reg.add_argument("--bio", required=True, help="Agent bio")
+    p_reg.add_argument(
+        "--key-file",
+        default="~/.config/colony-crew/api_key",
+        help="Where to save the API key (shown once). Read back to confirm the account.",
+    )
     p_reg.set_defaults(func=cmd_register)
 
     # feed

@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from crewai_colony import (
     ColonyMarkNotificationsRead,
-    ColonyRegister,
+    ColonyRegisterBegin,
+    ColonyRegisterConfirm,
     ColonyToolkit,
     ColonyUpdatePost,
     ColonyUpdateProfile,
@@ -326,15 +327,15 @@ class TestMarkNotificationsReadError:
 
 class TestRegisterAsync:
     async def test_arun_uses_async_client(self) -> None:
-        """``_arun`` uses ``AsyncColonyClient.register`` natively when the
+        """``_arun`` uses ``AsyncColonyClient.register_begin`` natively when the
         ``[async]`` extra is installed."""
         from unittest.mock import AsyncMock, patch
 
         import colony_sdk
 
         async_mock = AsyncMock(return_value={"api_key": "col_new"})
-        with patch.object(colony_sdk.AsyncColonyClient, "register", async_mock):
-            tool = ColonyRegister()
+        with patch.object(colony_sdk.AsyncColonyClient, "register_begin", async_mock):
+            tool = ColonyRegisterBegin()
             result = await tool._arun(
                 username="new-agent",
                 display_name="New",
@@ -355,8 +356,8 @@ class TestRegisterAsync:
         import colony_sdk
 
         async_mock = AsyncMock(side_effect=Exception("username taken"))
-        with patch.object(colony_sdk.AsyncColonyClient, "register", async_mock):
-            tool = ColonyRegister()
+        with patch.object(colony_sdk.AsyncColonyClient, "register_begin", async_mock):
+            tool = ColonyRegisterBegin()
             result = await tool._arun(
                 username="taken",
                 display_name="Taken",
@@ -389,8 +390,11 @@ class TestRegisterAsync:
             sys.modules.pop("colony_sdk.async_client", None)
 
             with patch("crewai_colony.tools.ColonyClient") as mock_sync:
-                mock_sync.register.return_value = {"api_key": "col_fallback"}
-                tool = ColonyRegister()
+                mock_sync.register_begin.return_value = {
+                    "api_key": "col_fallback",
+                    "claim_token": "claim-fb",
+                }
+                tool = ColonyRegisterBegin()
                 result = await tool._arun(
                     username="fb",
                     display_name="FB",
@@ -515,57 +519,137 @@ class TestCLI:
                 cmd_feed(args)
             mock_tool._run.assert_called_once()
 
-    def test_register_command(self) -> None:
-        """Register command calls ColonyClient.register."""
+    def test_register_command_writes_the_key_then_confirms_from_the_file(self) -> None:
+        """The CLI's whole job is the middle step: it must read the key back off
+        disk to build the fingerprint, so a failed write cannot be confirmed."""
         import argparse
+        import tempfile
+        from pathlib import Path
         from unittest.mock import patch
 
         from crewai_colony.cli import cmd_register
 
-        args = argparse.Namespace(
-            username="test-bot",
-            display_name="Test Bot",
-            bio="A test bot",
-        )
-        with patch("colony_sdk.ColonyClient") as mock_cls:
-            mock_cls.register.return_value = {"api_key": "col_new_key"}
-            cmd_register(args)
-            mock_cls.register.assert_called_once_with(
+        with tempfile.TemporaryDirectory() as d:
+            kf = Path(d) / "nested" / "api_key"
+            args = argparse.Namespace(
                 username="test-bot",
                 display_name="Test Bot",
                 bio="A test bot",
+                key_file=str(kf),
             )
+            with patch("colony_sdk.ColonyClient") as mock_cls:
+                mock_cls.register_begin.return_value = {
+                    "api_key": "col_new_key",
+                    "claim_token": "claim-1",
+                }
+                cmd_register(args)
+                mock_cls.register_begin.assert_called_once_with(
+                    username="test-bot",
+                    display_name="Test Bot",
+                    bio="A test bot",
+                )
+                # Confirmed with the last six characters, and only after a write.
+                mock_cls.register_confirm.assert_called_once_with(
+                    claim_token="claim-1",
+                    key_fingerprint="ew_key",
+                )
+            assert kf.read_text() == "col_new_key"
+            assert oct(kf.stat().st_mode)[-3:] == "600"
+
+    def test_register_command_refuses_to_clobber_an_existing_key_file(self) -> None:
+        import argparse
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import pytest as _pytest
+
+        from crewai_colony.cli import cmd_register
+
+        with tempfile.TemporaryDirectory() as d:
+            kf = Path(d) / "api_key"
+            kf.write_text("col_a_key_that_already_matters")
+            args = argparse.Namespace(
+                username="test-bot",
+                display_name="Test Bot",
+                bio="A test bot",
+                key_file=str(kf),
+            )
+            with patch("colony_sdk.ColonyClient") as mock_cls:
+                mock_cls.register_begin.return_value = {
+                    "api_key": "col_new_key",
+                    "claim_token": "claim-1",
+                }
+                with _pytest.raises(SystemExit):
+                    cmd_register(args)
+                mock_cls.register_confirm.assert_not_called()
+            assert kf.read_text() == "col_a_key_that_already_matters"
+
+    def test_register_command_will_not_confirm_if_the_key_did_not_round_trip(self) -> None:
+        """The guard that makes the read-back meaningful.
+
+        Without this, ``stored[-6:]`` vs ``api_key[-6:]`` at the confirm call is an
+        equivalent mutation — they only differ when the file disagrees with memory,
+        and this is the test that creates that case. What must hold is that a
+        non-round-tripping write NEVER reaches confirm: activating an account whose
+        key was not durably stored is the exact failure two-step registration exists
+        to prevent.
+        """
+        import argparse
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import pytest as _pytest
+
+        from crewai_colony.cli import cmd_register
+
+        with tempfile.TemporaryDirectory() as d:
+            kf = Path(d) / "api_key"
+            args = argparse.Namespace(
+                username="test-bot",
+                display_name="Test Bot",
+                bio="A test bot",
+                key_file=str(kf),
+            )
+            real_read = Path.read_text
+
+            def lying_read(self, *a, **kw):  # type: ignore[no-untyped-def]
+                if self == kf:
+                    return "col_TRUNCATED"
+                return real_read(self, *a, **kw)
+
+            with patch("colony_sdk.ColonyClient") as mock_cls, patch.object(Path, "read_text", lying_read):
+                mock_cls.register_begin.return_value = {
+                    "api_key": "col_new_key",
+                    "claim_token": "claim-1",
+                }
+                with _pytest.raises(SystemExit):
+                    cmd_register(args)
+                mock_cls.register_confirm.assert_not_called()
 
     def test_register_error(self) -> None:
         """Register command handles errors."""
         import argparse
+        import tempfile
+        from pathlib import Path
         from unittest.mock import patch
+
+        import pytest as _pytest
 
         from crewai_colony.cli import cmd_register
 
-        args = argparse.Namespace(
-            username="taken",
-            display_name="Taken",
-            bio="...",
-        )
-        with patch("colony_sdk.ColonyClient") as mock_cls:
-            mock_cls.register.side_effect = Exception("username taken")
-            import pytest
-
-            with pytest.raises(SystemExit, match="1"):
-                cmd_register(args)
-
-    def test_get_api_key_missing(self) -> None:
-        """_get_api_key exits when env var not set."""
-        from unittest.mock import patch
-
-        from crewai_colony.cli import _get_api_key
-
-        with patch.dict("os.environ", {}, clear=True):
-            import pytest
-
-            with pytest.raises(SystemExit, match="1"):
-                _get_api_key()
+        with tempfile.TemporaryDirectory() as d:
+            args = argparse.Namespace(
+                username="test-bot",
+                display_name="Test Bot",
+                bio="A test bot",
+                key_file=str(Path(d) / "api_key"),
+            )
+            with patch("colony_sdk.ColonyClient") as mock_cls:
+                mock_cls.register_begin.side_effect = Exception("username taken")
+                with _pytest.raises(SystemExit):
+                    cmd_register(args)
 
     def test_get_api_key_present(self) -> None:
         """_get_api_key returns the key when set."""
@@ -635,3 +719,152 @@ class TestCLI:
             mock_tk.return_value.get_tools.return_value = [mock_tool]
             main()
             mock_tool._run.assert_called_once()
+
+
+# ── Two-step registration: the branches the migration added ────────
+
+
+class TestRegisterConfirmAsync:
+    """``ColonyRegisterConfirm`` mirrors ``ColonyRegisterBegin``'s async surface.
+
+    Begin has all three async paths pinned; confirm had none, which left the
+    activating half of two-step registration untested on the async client.
+    """
+
+    async def test_arun_uses_async_client(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        import colony_sdk
+
+        async_mock = AsyncMock(return_value={"username": "new-agent"})
+        with patch.object(colony_sdk.AsyncColonyClient, "register_confirm", async_mock):
+            tool = ColonyRegisterConfirm()
+            result = await tool._arun(claim_token="claim-xyz", key_fingerprint="ew_key")
+            assert "active" in result
+            assert "@new-agent" in result
+            async_mock.assert_awaited_once_with(
+                claim_token="claim-xyz",
+                key_fingerprint="ew_key",
+            )
+
+    async def test_arun_handles_error(self) -> None:
+        """A wrong fingerprint is the expected failure here, and it must come
+        back as a tool result rather than an exception through the crew."""
+        from unittest.mock import AsyncMock, patch
+
+        import colony_sdk
+
+        async_mock = AsyncMock(side_effect=Exception("fingerprint mismatch"))
+        with patch.object(colony_sdk.AsyncColonyClient, "register_confirm", async_mock):
+            tool = ColonyRegisterConfirm()
+            result = await tool._arun(claim_token="claim-xyz", key_fingerprint="wrong1")
+            assert "Error" in result
+            assert "fingerprint mismatch" in result
+
+    async def test_arun_falls_back_when_async_extra_missing(self) -> None:
+        """Without the ``[async]`` extra the sync path runs in a thread."""
+        import contextlib
+        import sys
+        from unittest.mock import patch
+
+        import colony_sdk
+
+        original = colony_sdk.AsyncColonyClient
+
+        def _raise(name: str) -> None:
+            if name == "AsyncColonyClient":
+                raise ImportError("httpx not installed")
+            return original  # pragma: no cover
+
+        with patch.object(colony_sdk, "__getattr__", _raise, create=True):
+            with contextlib.suppress(AttributeError):
+                del colony_sdk.AsyncColonyClient
+            sys.modules.pop("colony_sdk.async_client", None)
+
+            with patch("crewai_colony.tools.ColonyClient") as mock_sync:
+                mock_sync.register_confirm.return_value = {"username": "fb"}
+                tool = ColonyRegisterConfirm()
+                result = await tool._arun(claim_token="claim-fb", key_fingerprint="back6")
+                assert "@fb" in result
+
+        colony_sdk.AsyncColonyClient = original
+
+
+class TestRegisterConfirmSyncError:
+    def test_confirm_error(self) -> None:
+        """Lines 1288-1289: the sync confirm error branch."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("crewai_colony.tools.ColonyClient") as mock_cls:
+            mock_cls.register_confirm.side_effect = Exception("claim expired")
+            tool = ColonyRegisterConfirm()
+            result = tool._run(claim_token="stale", key_fingerprint="ew_key")
+            assert "Error" in result
+            assert "claim expired" in result
+            assert isinstance(mock_cls, MagicMock)
+
+
+class TestRegisterCliIncompleteBegin:
+    """``register_begin`` returning a partial payload must stop before the write.
+
+    Both arms of the ``missing`` ternary are pinned separately, because the
+    name it prints is the only thing that tells an operator which half of the
+    handshake the server withheld — and a single test would leave the other
+    arm free to say anything.
+    """
+
+    def _run_with(self, begun: dict, expect_named: str, not_named: str):
+        import argparse
+        import contextlib
+        import io
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import pytest as _pytest
+
+        from crewai_colony.cli import cmd_register
+
+        with tempfile.TemporaryDirectory() as d:
+            kf = Path(d) / "api_key"
+            args = argparse.Namespace(
+                username="test-bot",
+                display_name="Test Bot",
+                bio="A test bot",
+                key_file=str(kf),
+            )
+            err = io.StringIO()
+            with patch("colony_sdk.ColonyClient") as mock_cls:
+                mock_cls.register_begin.return_value = begun
+                with contextlib.redirect_stderr(err), _pytest.raises(SystemExit):
+                    cmd_register(args)
+                mock_cls.register_confirm.assert_not_called()
+            # Nothing was written, so a retry is still clean.
+            assert not kf.exists()
+            # The message must name the field that was actually missing. Without
+            # this the ternary is an equivalent mutation: both arms exit, both
+            # skip the write, and only the text distinguishes them.
+            assert expect_named in err.getvalue(), err.getvalue()
+            assert not_named not in err.getvalue(), err.getvalue()
+
+    def test_missing_api_key(self) -> None:
+        self._run_with({"api_key": "", "claim_token": "claim-1"}, expect_named="api_key", not_named="claim_token")
+
+    def test_missing_claim_token(self) -> None:
+        self._run_with(
+            {"api_key": "col_new_key", "claim_token": ""}, expect_named="claim_token", not_named="no api_key"
+        )
+
+
+class TestGetApiKeyMissing:
+    def test_get_api_key_absent_exits(self) -> None:
+        """Lines 20-21: no ``COLONY_API_KEY`` is an exit, not an empty string
+        handed to the client to fail on later."""
+        from unittest.mock import patch
+
+        import pytest as _pytest
+
+        from crewai_colony.cli import _get_api_key
+
+        with patch.dict("os.environ", {"COLONY_API_KEY": ""}, clear=False), _pytest.raises(SystemExit):
+            _get_api_key()
