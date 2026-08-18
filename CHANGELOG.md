@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-08-18)
+
+Our own cuts announce themselves.
 
 ### Fixed
 
