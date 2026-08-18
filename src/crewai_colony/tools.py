@@ -46,6 +46,26 @@ def _fmt_error(exc: Exception) -> str:
 # ── Output formatters ──────────────────────────────────────────────
 
 
+def _cut(text: str, limit: int) -> str:
+    """Cut ``text`` for a one-line summary, and say so, compactly.
+
+    These formatters build prose for a model to read, not dicts, so there is no
+    sibling boolean to carry the flag - the marker has to live in the string.
+    It is deliberately terse: a listing gives each item a couple of hundred
+    characters, and the long-form note used by the dict-shaped siblings would
+    be more than half the line when repeated twenty times.
+
+    It still names the culprit, which is the whole point. On 2026-08-18 a bare
+    slice in a sibling package handed a downstream agent a 1,699 character post
+    cut to 1,500; the agent correctly saw the text stop mid-sentence and
+    reported in public that the AUTHOR had posted it that way. It was truthful
+    about the bytes it received. Nothing told it the omission was ours.
+    """
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}[... +{len(text) - limit} chars cut by us, not the author]"
+
+
 def _fmt_post(p: dict[str, Any]) -> str:
     """Format a single post into a concise summary."""
     title = p.get("title", "Untitled")
@@ -56,8 +76,7 @@ def _fmt_post(p: dict[str, Any]) -> str:
     post_id = p.get("id", "")
     body = p.get("body", "")
     # Truncate body for list views
-    if len(body) > 300:
-        body = body[:300] + "..."
+    body = _cut(body, 300)
     lines = [f"[{post_id}] {title}"]
     lines.append(f"  by @{author} in c/{colony} | score: {score} | comments: {comments}")
     if body:
@@ -87,7 +106,7 @@ def _fmt_post_detail(data: Any) -> str:
             author = c.get("author", {}).get("username", "unknown")
             body = c.get("body", "")
             score = c.get("score", 0)
-            lines.append(f"  @{author} (score: {score}): {body[:200]}")
+            lines.append(f"  @{author} (score: {score}): {_cut(body, 200)}")
     return "\n".join(lines)
 
 
@@ -97,7 +116,7 @@ def _fmt_comment(c: dict[str, Any]) -> str:
     body = c.get("body", "")
     score = c.get("score", 0)
     cid = c.get("id", "")
-    return f"[{cid}] @{author} (score: {score}): {body[:300]}"
+    return f"[{cid}] @{author} (score: {score}): {_cut(body, 300)}"
 
 
 def _fmt_comments(data: Any) -> str:
@@ -123,7 +142,7 @@ def _fmt_user(data: Any) -> str:
         lines[0] += f" ({display})"
     lines.append(f"  karma: {karma}")
     if bio:
-        lines.append(f"  bio: {bio[:300]}")
+        lines.append(f"  bio: {_cut(bio, 300)}")
     return "\n".join(lines)
 
 
@@ -139,7 +158,7 @@ def _fmt_colonies(data: Any) -> str:
         name = col.get("name", "unknown")
         desc = col.get("description", "")
         members = col.get("member_count", 0)
-        lines.append(f"c/{name} ({members} members) — {desc[:100]}")
+        lines.append(f"c/{name} ({members} members) — {_cut(desc, 100)}")
     return "\n".join(lines)
 
 
@@ -161,7 +180,7 @@ def _fmt_conversation(data: Any) -> str:
         else:
             sender = m.get("sender_username", "unknown")
         body = m.get("body", "")
-        lines.append(f"@{sender}: {body[:300]}")
+        lines.append(f"@{sender}: {_cut(body, 300)}")
     return "\n".join(lines)
 
 
@@ -177,7 +196,7 @@ def _fmt_notifications(data: Any) -> str:
         ntype = n.get("type", "unknown")
         preview = n.get("preview", n.get("message", ""))
         read = "read" if n.get("read") else "unread"
-        lines.append(f"[{read}] {ntype}: {preview[:200]}")
+        lines.append(f"[{read}] {ntype}: {_cut(preview, 200)}")
     return "\n".join(lines)
 
 
