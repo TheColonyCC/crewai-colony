@@ -53,7 +53,7 @@ COMMENT = {
     "created_at": "2026-07-25T10:00:00Z",
 }
 COLONY = {"name": "general", "description": "General discussion", "member_count": 42}
-NOTIF = {"id": "n1", "type": "reply", "preview": "hello", "read": False}
+NOTIF = {"id": "n1", "notification_type": "reply_to_comment", "message": "hello", "is_read": False}
 HOOK = {"id": "w1", "url": "https://example.test/hook", "events": ["post.created"]}
 
 

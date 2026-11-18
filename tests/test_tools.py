@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -245,22 +246,124 @@ class TestGetConversation:
         assert "Hey there!" in result
 
 
+def _notif(**fields: Any) -> dict[str, Any]:
+    """A notification shaped as ``GET /api/v1/notifications`` sends it."""
+    base: dict[str, Any] = {
+        "id": "n1",
+        "notification_type": "mention",
+        "message": "Someone mentioned you",
+        "actor": {"id": "u-1", "username": "someone", "display_name": "Someone", "user_type": "agent"},
+        "post_id": None,
+        "comment_id": None,
+        "conversation_id": None,
+        "message_id": None,
+        "wiki_page_id": None,
+        "comment_preview": None,
+        "is_read": False,
+        "created_at": "2026-11-18T17:00:00Z",
+    }
+    base.update(fields)
+    return base
+
+
 class TestGetNotifications:
     def test_calls_get_notifications(self, mock_client: MagicMock) -> None:
-        mock_client.get_notifications.return_value = {
-            "notifications": [
-                {
-                    "type": "mention",
-                    "preview": "Someone mentioned you",
-                    "read": False,
-                }
-            ]
-        }
+        mock_client.get_notifications.return_value = [_notif()]
         tool = ColonyGetNotifications(client=mock_client)
         result = tool._run()
         mock_client.get_notifications.assert_called_once_with(unread_only=True)
-        assert "mention" in result
-        assert "unread" in result
+        assert result == "[unread] mention from @someone: Someone mentioned you"
+
+    def test_reads_the_field_names_the_server_sends(self, mock_client: MagicMock) -> None:
+        """Regression: the formatter read ``type`` and ``read``, which a
+        notification does not carry, so every line said ``[unread] unknown``."""
+        mock_client.get_notifications.return_value = [_notif(notification_type="reply_to_comment", is_read=True)]
+        result = ColonyGetNotifications(client=mock_client)._run(unread_only=False)
+        assert result.startswith("[read] reply_to_comment from @someone: ")
+
+    def test_dm_notification_carries_conversation_and_message_ids(self, mock_client: MagicMock) -> None:
+        mock_client.get_notifications.return_value = [
+            _notif(
+                notification_type="direct_message",
+                message="Someone: hello, I wanted to ask about...",
+                conversation_id="conv-1",
+                message_id="msg-1",
+            )
+        ]
+        result = ColonyGetNotifications(client=mock_client)._run()
+        assert "from @someone" in result
+        assert "(conversation_id=conv-1, message_id=msg-1)" in result
+
+    def test_ids_are_left_out_when_null(self, mock_client: MagicMock) -> None:
+        mock_client.get_notifications.return_value = [_notif()]
+        assert "_id=" not in ColonyGetNotifications(client=mock_client)._run()
+
+    def test_no_actor_no_from(self, mock_client: MagicMock) -> None:
+        mock_client.get_notifications.return_value = [_notif(actor=None)]
+        assert ColonyGetNotifications(client=mock_client)._run() == "[unread] mention: Someone mentioned you"
+
+    def test_reply_shows_the_comments_own_text(self, mock_client: MagicMock) -> None:
+        mock_client.get_notifications.return_value = [
+            _notif(
+                notification_type="reply_to_comment",
+                message="Someone replied to your comment",
+                post_id="p1",
+                comment_id="c2",
+                comment_preview={
+                    "id": "c2",
+                    "parent_id": "c1",
+                    "created_at": "2026-11-18T17:00:00Z",
+                    "excerpt": "I disagree with the second point, because the data says otherwise.",
+                    "truncated": False,
+                },
+            )
+        ]
+        first, second = ColonyGetNotifications(client=mock_client)._run().splitlines()
+        assert first.endswith("(post_id=p1, comment_id=c2)")
+        assert second == (
+            "  comment c2 (reply to comment c1): I disagree with the second point, because the data says otherwise."
+        )
+
+    def test_a_cut_comment_says_so_and_names_the_whole_comment(self, mock_client: MagicMock) -> None:
+        excerpt = "word " * 99 + "word…"
+        mock_client.get_notifications.return_value = [
+            _notif(
+                comment_id="c9",
+                comment_preview={"id": "c9", "parent_id": None, "excerpt": excerpt, "truncated": True},
+            )
+        ]
+        line = ColonyGetNotifications(client=mock_client)._run().splitlines()[1]
+        # Passed through whole: no cut of ours on top of the server's.
+        assert excerpt in line
+        assert "(on the post)" in line
+        assert "cut by the server at 500 chars" in line
+        assert "GET /api/v1/comments/c9" in line
+        assert "cut by us" not in line
+
+    def test_an_uncut_comment_is_not_marked(self, mock_client: MagicMock) -> None:
+        """Must-allow control for the marker above."""
+        mock_client.get_notifications.return_value = [
+            _notif(comment_preview={"id": "c2", "parent_id": None, "excerpt": "short", "truncated": False})
+        ]
+        assert "cut by the server" not in ColonyGetNotifications(client=mock_client)._run()
+
+    def test_a_multi_line_comment_stays_under_its_notification(self, mock_client: MagicMock) -> None:
+        mock_client.get_notifications.return_value = [
+            _notif(comment_preview={"id": "c2", "parent_id": None, "excerpt": "one\ntwo", "truncated": False})
+        ]
+        lines = ColonyGetNotifications(client=mock_client)._run().splitlines()
+        assert lines[1].endswith(": one")
+        assert lines[2] == "    two"
+
+    def test_description_says_where_the_whole_text_is(self) -> None:
+        description = ColonyGetNotifications().description
+        assert "reply_to_comment" in description
+        assert "500 characters" in description
+        assert "GET /api/v1/comments/{comment_id}" in description
+        assert "first ~80 characters" in description
+        assert "colony_get_conversation" in description
+        # Names the old description listed that the server has no such type for.
+        assert "vote" not in description
 
     def test_all_notifications(self, mock_client: MagicMock) -> None:
         mock_client.get_notifications.return_value = {"notifications": []}

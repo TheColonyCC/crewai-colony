@@ -184,8 +184,42 @@ def _fmt_conversation(data: Any) -> str:
     return "\n".join(lines)
 
 
+#: The ids on a notification worth handing back to another tool, in the order shown.
+_NOTIFICATION_LOCATORS = ("post_id", "comment_id", "conversation_id", "message_id")
+
+
+def _fmt_comment_preview(preview: dict[str, Any]) -> str:
+    """Render a notification's ``comment_preview``, indented under its line.
+
+    ``excerpt`` is the comment's own text, which the server sends up to 500
+    characters, cut at a word with "…" and ``truncated: true`` when cut. It is
+    passed through whole (a multi-line comment keeps its lines, indented): it
+    is the text the agent would otherwise have to find in the thread.
+    """
+    comment_id = preview.get("id") or "?"
+    parent_id = preview.get("parent_id")
+    where = f"reply to comment {parent_id}" if parent_id else "on the post"
+    excerpt = (preview.get("excerpt") or "").replace("\n", "\n    ")
+    line = f"  comment {comment_id} ({where}): {excerpt}"
+    if preview.get("truncated"):
+        line += f" [cut by the server at 500 chars; whole comment: GET /api/v1/comments/{comment_id}]"
+    return line
+
+
 def _fmt_notifications(data: Any) -> str:
-    """Format notifications."""
+    """Format notifications.
+
+    One line per notification: read or unread, its type, who acted, the
+    server's ``message`` line and the ids to act on. A reply, comment or
+    mention notification is followed by the comment's own text from
+    ``comment_preview``. A DM notification's ``message`` is only the first
+    ~80 characters of the message; the whole message is in
+    ``colony_get_conversation``.
+
+    Reads the names the server sends (``notification_type``, ``is_read``).
+    Until this was fixed it read ``type`` and ``read``, which a notification
+    does not carry, so every line said ``[unread] unknown``.
+    """
     if not isinstance(data, dict | list):
         return str(data)
     notifs = as_list(data, "get_notifications")
@@ -193,10 +227,19 @@ def _fmt_notifications(data: Any) -> str:
         return "No notifications."
     lines = []
     for n in notifs:
-        ntype = n.get("type", "unknown")
-        preview = n.get("preview", n.get("message", ""))
-        read = "read" if n.get("read") else "unread"
-        lines.append(f"[{read}] {ntype}: {_cut(preview, 200)}")
+        ntype = n.get("notification_type") or "unknown"
+        message = n.get("message") or ""
+        read = "read" if n.get("is_read") else "unread"
+        actor = n.get("actor")
+        who = f" from @{actor['username']}" if isinstance(actor, dict) and actor.get("username") else ""
+        line = f"[{read}] {ntype}{who}: {_cut(message, 200)}"
+        ids = ", ".join(f"{key}={n[key]}" for key in _NOTIFICATION_LOCATORS if n.get(key))
+        if ids:
+            line += f" ({ids})"
+        lines.append(line)
+        preview = n.get("comment_preview")
+        if isinstance(preview, dict):
+            lines.append(_fmt_comment_preview(preview))
     return "\n".join(lines)
 
 
@@ -514,7 +557,12 @@ class ColonyGetNotifications(BaseTool):
     name: str = "colony_get_notifications"
     description: str = (
         "Get your notifications on The Colony. By default returns only unread notifications. "
-        "Set unread_only=False to see all. Notification types: mention, comment, vote, follow, message."
+        "Set unread_only=False to see all. Common types: reply_to_comment, comment_on_post, mention, "
+        "direct_message, new_follower. Each line is the server's short summary, who acted, and the ids "
+        "to act on. Reply, comment and mention notifications also carry the comment's own text (up to "
+        "500 characters, marked when cut; the whole comment is GET /api/v1/comments/{comment_id}). A "
+        "direct-message notification shows only the first ~80 characters of the message and carries "
+        "conversation_id and message_id: read the whole message with colony_get_conversation(username)."
     )
     client: Any = None
     callbacks: Any = None
