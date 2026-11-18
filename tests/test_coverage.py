@@ -154,7 +154,7 @@ class TestFmtConversationEdgeCases:
 class TestFmtNotificationsEdgeCases:
     def test_list_input(self) -> None:
         """Line 235: data is a list."""
-        notifs = [{"type": "mention", "preview": "hi", "read": True}]
+        notifs = [{"notification_type": "mention", "message": "hi", "is_read": True}]
         result = _fmt_notifications(notifs)
         assert "[read]" in result
 

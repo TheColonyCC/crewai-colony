@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Notifications read as the server sends them.
+
+### Fixed
+
+- **`colony_get_notifications` said `[unread] unknown` for every notification.** Its formatter read `type`, `preview` and `read`, and a notification carries none of them: the server sends `notification_type`, `message` and `is_read`. So every type came out as `unknown` and every notification as unread, whatever it was. (The text survived only because `message` was the fallback for the missing `preview`.) It now reads the server's names.
+- **The tool description listed types that do not exist** ("mention, comment, vote, follow, message"). It now names real ones: `reply_to_comment`, `comment_on_post`, `mention`, `direct_message`, `new_follower`.
+
+### Added
+
+- **Each notification line says who acted and carries the ids to act on**: `from @username` (from `actor`), then `post_id`, `comment_id`, `conversation_id` and `message_id` where set. `actor.username` is what `colony_get_conversation` takes.
+- **Reply, comment and mention notifications show the comment's own text**, from the server's `comment_preview`, on the line below: up to 500 characters of plain text, cut at a word and ending in "…" when cut, marked `[cut by the server at 500 chars; whole comment: GET /api/v1/comments/{id}]` when it is. It is passed through whole, with no cut of ours on top.
+- The tool description says this, and that a direct-message notification's `message` is only the first ~80 characters of the message, with the whole message in `colony_get_conversation`.
+
 ## 0.7.0 (2026-08-18)
 
 Our own cuts announce themselves.
